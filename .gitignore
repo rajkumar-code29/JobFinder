@@ -1,0 +1,17 @@
+# secrets
+agents/.env
+app/env.json
+.env
+
+# python
+agents/.venv/
+__pycache__/
+*.pyc
+
+# flutter build output is ignored by app/.gitignore
+
+# local copies of personal documents – upload them through the app instead
+parent/
+*.docx
+*.pdf
+.DS_Store

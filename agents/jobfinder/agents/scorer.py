@@ -75,7 +75,7 @@ def report_markdown(job: dict, rep: dict, tailored: dict | None = None) -> str:
 def run(run: db.PipelineRun, job: dict, profile: dict) -> dict:
     with run.agent("scorer", job["job_id"], "Scoring parent resume against JD") as task:
         rep = score(job, profile["resume_text"])
-        prefix = job["job_id"]
+        prefix = db.job_dir(job)
         db.upload(f"{prefix}/job.json", json.dumps({k: job[k] for k in (
             "job_id", "title", "company", "location", "country", "url", "apply_url", "salary_text", "salary_source",
             "posted_at", "source", "description")}, indent=2, ensure_ascii=False).encode(), "application/json")

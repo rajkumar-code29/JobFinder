@@ -2,6 +2,7 @@ import 'dart:typed_data';
 
 import 'package:file_picker/file_picker.dart';
 import 'package:flutter/material.dart';
+import 'package:intl/intl.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 
 import '../api.dart';
@@ -66,7 +67,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
   Future<void> _save() async {
     setState(() => _saving = true);
     try {
-      final s = Map<String, dynamic>.from(_s!)..remove('id')..remove('updated_at');
+      final s = Map<String, dynamic>.from(_s!)..remove('user_id')..remove('updated_at');
       await Api.saveSettings(s);
       setState(() => _dirty = false);
       if (mounted) toast(context, 'Saved. Agents use these settings from the next run.');
@@ -104,7 +105,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
                 maxWidth: 860,
                 child: Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
                   const _ParentDocs(),
-                  const SizedBox(height: 16),
+                  const _ApiKeys(),
                   _Section(
                     title: 'Countries',
                     subtitle: 'Where the scouts look',
@@ -432,5 +433,244 @@ class _ParentDocsState extends State<_ParentDocs> {
             ]);
           },
         ),
+      );
+}
+
+const providerInfo = {
+  'gemini': ('Gemini', 'aistudio.google.com/apikey', Icons.auto_awesome),
+  'adzuna': ('Adzuna', 'developer.adzuna.com', Icons.travel_explore),
+  'rapidapi': ('RapidAPI · JSearch', 'rapidapi.com (JSearch free plan)', Icons.hub_outlined),
+};
+
+/// The user's own API keys. Tried top to bottom; when one hits its limit the agents switch to the next.
+class _ApiKeys extends StatefulWidget {
+  const _ApiKeys();
+
+  @override
+  State<_ApiKeys> createState() => _ApiKeysState();
+}
+
+class _ApiKeysState extends State<_ApiKeys> {
+  late Future<(List<Map<String, dynamic>>, Map<String, dynamic>?)> _future = _load();
+
+  Future<(List<Map<String, dynamic>>, Map<String, dynamic>?)> _load() async =>
+      (await Api.apiKeys(), await Api.account());
+
+  void _reload() => setState(() => _future = _load());
+
+  Future<void> _add(List<Map<String, dynamic>> existing) async {
+    final added = await showDialog<bool>(
+      context: context,
+      builder: (_) => _AddKeyDialog(existing: existing),
+    );
+    if (added == true) _reload();
+  }
+
+  Future<void> _delete(Map<String, dynamic> k) async {
+    final ok = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text('Remove this key?'),
+        content: Text('${providerInfo[k['provider']]?.$1 ?? k['provider']} ${k['label']} ${k['hint']}'),
+        actions: [
+          TextButton(onPressed: () => Navigator.pop(ctx, false), child: const Text('Cancel')),
+          FilledButton(onPressed: () => Navigator.pop(ctx, true), child: const Text('Remove')),
+        ],
+      ),
+    );
+    if (ok != true) return;
+    try {
+      await Api.deleteApiKey(k['id'] as String);
+      _reload();
+    } catch (e) {
+      if (mounted) toast(context, 'Could not remove key: $e');
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) => _Section(
+        title: 'API keys',
+        subtitle: 'Your own keys, tried top to bottom. When one hits its free limit the agents switch to the next one '
+            'and retry the used-up key after it resets. Keys can\'t be viewed again after saving.',
+        child: FutureBuilder<(List<Map<String, dynamic>>, Map<String, dynamic>?)>(
+          future: _future,
+          builder: (context, snap) {
+            if (snap.hasError) return Text('${snap.error}');
+            if (!snap.hasData) return const LinearProgressIndicator();
+            final (keys, account) = snap.data!;
+            final theme = Theme.of(context);
+            final shared = account?['use_shared_keys'] == true;
+            return Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
+              Container(
+                padding: const EdgeInsets.all(10),
+                decoration: BoxDecoration(
+                  color: theme.colorScheme.surfaceContainerHighest,
+                  borderRadius: BorderRadius.circular(8),
+                ),
+                child: Text(
+                  '${shared ? 'After your own keys, the shared keys are used as a last fallback.' : 'Only your own keys are used — add at least one Gemini key.'}'
+                  '  Limit: ${account?['llm_calls_per_run'] ?? '—'} Gemini calls per hourly run.',
+                  style: theme.textTheme.bodySmall,
+                ),
+              ),
+              const SizedBox(height: 8),
+              for (final entry in providerInfo.entries) ...[
+                Padding(
+                  padding: const EdgeInsets.only(top: 8),
+                  child: Row(children: [
+                    Icon(entry.value.$3, size: 18),
+                    const SizedBox(width: 6),
+                    Text(entry.value.$1, style: theme.textTheme.labelLarge),
+                  ]),
+                ),
+                if (!keys.any((k) => k['provider'] == entry.key))
+                  Padding(
+                    padding: const EdgeInsets.only(left: 24, top: 4),
+                    child: Text(shared ? 'No own keys – using shared keys' : 'No keys', style: theme.textTheme.bodySmall),
+                  ),
+                for (final (i, k) in keys.where((k) => k['provider'] == entry.key).indexed) _KeyTile(index: i + 1, data: k, onDelete: () => _delete(k)),
+              ],
+              const SizedBox(height: 12),
+              Align(
+                alignment: Alignment.centerLeft,
+                child: FilledButton.tonalIcon(
+                  onPressed: () => _add(keys),
+                  icon: const Icon(Icons.add),
+                  label: const Text('Add API key'),
+                ),
+              ),
+            ]);
+          },
+        ),
+      );
+}
+
+class _KeyTile extends StatelessWidget {
+  const _KeyTile({required this.index, required this.data, required this.onDelete});
+  final int index;
+  final Map<String, dynamic> data;
+  final VoidCallback onDelete;
+
+  @override
+  Widget build(BuildContext context) {
+    final until = data['exhausted_until'] == null ? null : DateTime.parse(data['exhausted_until'] as String).toLocal();
+    final parked = until != null && until.isAfter(DateTime.now());
+    final used = data['last_used_at'] == null ? null : DateTime.parse(data['last_used_at'] as String).toLocal();
+    final (color, status) = parked
+        ? (Colors.orange, 'Limit reached · retried after ${DateFormat.MMMd().add_jm().format(until)}')
+        : data['last_error'] != null
+            ? (Colors.red, '${data['last_error']}')
+            : (Colors.green, used == null ? 'Not used yet' : 'Working · last used ${ago(used)}');
+    final label = (data['label'] as String?)?.isNotEmpty == true ? data['label'] as String : 'Key $index';
+    return ListTile(
+      contentPadding: const EdgeInsets.only(left: 24),
+      dense: true,
+      leading: CircleAvatar(radius: 12, child: Text('$index', style: const TextStyle(fontSize: 11))),
+      title: Text('$label  ${data['hint']}${data['app_id'] != null ? '  (app ${data['app_id']})' : ''}'),
+      subtitle: Text(status, style: TextStyle(color: color), maxLines: 2, overflow: TextOverflow.ellipsis),
+      trailing: IconButton(icon: const Icon(Icons.delete_outline), tooltip: 'Remove', onPressed: onDelete),
+    );
+  }
+}
+
+class _AddKeyDialog extends StatefulWidget {
+  const _AddKeyDialog({required this.existing});
+  final List<Map<String, dynamic>> existing;
+
+  @override
+  State<_AddKeyDialog> createState() => _AddKeyDialogState();
+}
+
+class _AddKeyDialogState extends State<_AddKeyDialog> {
+  String _provider = 'gemini';
+  final _label = TextEditingController();
+  final _appId = TextEditingController();
+  final _key = TextEditingController();
+  bool _saving = false;
+  String? _error;
+
+  Future<void> _save() async {
+    if (_key.text.trim().isEmpty || (_provider == 'adzuna' && _appId.text.trim().isEmpty)) {
+      setState(() => _error = _provider == 'adzuna' ? 'Adzuna needs both the app id and the app key' : 'Paste the key');
+      return;
+    }
+    setState(() {
+      _saving = true;
+      _error = null;
+    });
+    // New keys go to the end of the fallback order for that provider.
+    final last = widget.existing
+        .where((k) => k['provider'] == _provider)
+        .fold<int>(-1, (m, k) => ((k['priority'] as int?) ?? 0) > m ? (k['priority'] as int? ?? 0) : m);
+    try {
+      await Api.addApiKey(
+        provider: _provider,
+        key: _key.text,
+        label: _label.text,
+        appId: _provider == 'adzuna' ? _appId.text : null,
+        priority: last + 1,
+      );
+      if (mounted) Navigator.pop(context, true);
+    } catch (e) {
+      setState(() {
+        _saving = false;
+        _error = '$e';
+      });
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) => AlertDialog(
+        title: const Text('Add API key'),
+        content: SizedBox(
+          width: 420,
+          child: Column(mainAxisSize: MainAxisSize.min, crossAxisAlignment: CrossAxisAlignment.stretch, children: [
+            DropdownButtonFormField<String>(
+              initialValue: _provider,
+              decoration: const InputDecoration(labelText: 'Provider', border: OutlineInputBorder()),
+              items: [
+                for (final e in providerInfo.entries) DropdownMenuItem(value: e.key, child: Text(e.value.$1)),
+              ],
+              onChanged: (v) => setState(() => _provider = v ?? 'gemini'),
+            ),
+            const SizedBox(height: 4),
+            Text('Get one at ${providerInfo[_provider]!.$2}', style: Theme.of(context).textTheme.bodySmall),
+            const SizedBox(height: 12),
+            TextField(
+              controller: _label,
+              decoration: const InputDecoration(labelText: 'Label (optional)', hintText: 'e.g. Personal', border: OutlineInputBorder()),
+            ),
+            if (_provider == 'adzuna') ...[
+              const SizedBox(height: 12),
+              TextField(controller: _appId, decoration: const InputDecoration(labelText: 'Adzuna app id', border: OutlineInputBorder())),
+            ],
+            const SizedBox(height: 12),
+            TextField(
+              controller: _key,
+              obscureText: true,
+              autocorrect: false,
+              enableSuggestions: false,
+              decoration: InputDecoration(
+                labelText: _provider == 'adzuna' ? 'Adzuna app key' : 'API key',
+                border: const OutlineInputBorder(),
+              ),
+            ),
+            if (_provider == 'gemini') ...[
+              const SizedBox(height: 8),
+              Text(
+                'Free Gemini limits are per Google Cloud project, so extra keys from the same project don\'t add quota.',
+                style: Theme.of(context).textTheme.bodySmall,
+              ),
+            ],
+            if (_error != null) ...[
+              const SizedBox(height: 8),
+              Text(_error!, style: TextStyle(color: Theme.of(context).colorScheme.error)),
+            ],
+          ]),
+        ),
+        actions: [
+          TextButton(onPressed: _saving ? null : () => Navigator.pop(context, false), child: const Text('Cancel')),
+          FilledButton(onPressed: _saving ? null : _save, child: const Text('Save key')),
+        ],
       );
 }

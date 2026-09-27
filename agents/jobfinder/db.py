@@ -22,33 +22,50 @@ def now_iso() -> str:
     return datetime.now(timezone.utc).isoformat()
 
 
+# ---------------------------------------------------------------- users
+def active_accounts() -> list[dict]:
+    return sb.table("accounts").select("*").eq("enabled", True).order("created_at").execute().data
+
+
+def user_api_keys(user_id: str) -> list[dict]:
+    return sb.table("api_keys").select("*").eq("user_id", user_id).execute().data
+
+
+def user_label(user_id: str) -> str:
+    try:
+        email = sb.auth.admin.get_user_by_id(user_id).user.email or ""
+        return email.split("@")[0][:3] + "…@" + email.split("@")[-1] if "@" in email else user_id[:8]
+    except Exception:
+        return user_id[:8]
+
+
 # ---------------------------------------------------------------- settings/profile
-def get_settings() -> dict:
-    return sb.table("settings").select("*").eq("id", 1).single().execute().data
+def get_settings(user_id: str) -> dict:
+    return sb.table("settings").select("*").eq("user_id", user_id).single().execute().data
 
 
-def get_profile() -> dict:
-    return sb.table("profile").select("*").eq("id", 1).single().execute().data
+def get_profile(user_id: str) -> dict:
+    return sb.table("profile").select("*").eq("user_id", user_id).single().execute().data
 
 
-def update_profile(values: dict) -> None:
-    sb.table("profile").update({**values, "updated_at": now_iso()}).eq("id", 1).execute()
+def update_profile(user_id: str, values: dict) -> None:
+    sb.table("profile").update({**values, "updated_at": now_iso()}).eq("user_id", user_id).execute()
 
 
 # ---------------------------------------------------------------- jobs
-def existing_keys(source: str, external_ids: list[str]) -> set[str]:
+def existing_keys(user_id: str, source: str, external_ids: list[str]) -> set[str]:
     found: set[str] = set()
     for i in range(0, len(external_ids), 100):
         chunk = external_ids[i:i + 100]
-        rows = sb.table("jobs").select("external_id").eq("source", source).in_("external_id", chunk).execute().data
+        rows = sb.table("jobs").select("external_id").eq("user_id", user_id).eq("source", source).in_("external_id", chunk).execute().data
         found.update(r["external_id"] for r in rows)
     return found
 
 
-def recent_fingerprints(days: int = 45) -> set[str]:
+def recent_fingerprints(user_id: str, days: int = 45) -> set[str]:
     """company|title fingerprints of recent jobs, for cross-source de-duplication."""
     since = (datetime.now(timezone.utc) - timedelta(days=days)).isoformat()
-    rows = sb.table("jobs").select("company,title").gte("created_at", since).limit(5000).execute().data
+    rows = sb.table("jobs").select("company,title").eq("user_id", user_id).gte("created_at", since).limit(5000).execute().data
     return {fingerprint(r["company"], r["title"]) for r in rows}
 
 
@@ -65,9 +82,9 @@ def update_job(job_id: str, values: dict) -> None:
     sb.table("jobs").update(values).eq("job_id", job_id).execute()
 
 
-def queued_jobs(limit: int) -> list[dict]:
+def queued_jobs(user_id: str, limit: int) -> list[dict]:
     return (
-        sb.table("jobs").select("*")
+        sb.table("jobs").select("*").eq("user_id", user_id)
         .in_("status", ["new", "scored", "tailored"])
         .lt("attempts", config.MAX_ATTEMPTS)
         .order("relevance", desc=True)
@@ -78,6 +95,11 @@ def queued_jobs(limit: int) -> list[dict]:
 
 
 # ---------------------------------------------------------------- storage
+def job_dir(job: dict) -> str:
+    """Storage folder for a job: jobs/<user_id>/<job_id>/"""
+    return f"{job['user_id']}/{job['job_id']}"
+
+
 def upload(path: str, data: bytes, content_type: str, bucket: str = JOBS_BUCKET) -> str:
     sb.storage.from_(bucket).upload(path, data, {"content-type": content_type, "upsert": "true"})
     return path
@@ -94,8 +116,9 @@ def list_files(prefix: str, bucket: str) -> list[dict]:
 
 # ---------------------------------------------------------------- runs
 class PipelineRun:
-    def __init__(self, trigger: str):
-        self.id = sb.table("pipeline_runs").insert({"trigger": trigger}).execute().data[0]["id"]
+    def __init__(self, trigger: str, user_id: str):
+        self.user_id = user_id
+        self.id = sb.table("pipeline_runs").insert({"trigger": trigger, "user_id": user_id}).execute().data[0]["id"]
         self.scanned = self.matched = self.processed = self.errors = 0
         self.lines: list[str] = []
 
@@ -117,7 +140,7 @@ class PipelineRun:
     def agent(self, name: str, job_id: str | None = None, message: str | None = None):
         """Record an agent task in agent_runs so the dashboard can show live activity and errors."""
         row = sb.table("agent_runs").insert(
-            {"pipeline_run": self.id, "agent": name, "job_id": job_id, "message": message}
+            {"pipeline_run": self.id, "user_id": self.user_id, "agent": name, "job_id": job_id, "message": message}
         ).execute().data[0]
         task = AgentTask(row["id"], message)
         try:

@@ -43,7 +43,7 @@ def search_roles(roles: list[str], countries: list[str]) -> list[RawJob]:
         try:
             items, _ = llm.search_json(PROMPT.format(query=query))
             jobs += _to_jobs(items, "roles", cc)
-        except llm.BudgetExceeded:
+        except llm.StopUser:
             raise
         except Exception as exc:
             log.warning("Google search %s failed: %s", cc, exc)
@@ -57,7 +57,7 @@ def search_site(url: str, roles: list[str], countries: list[str]) -> list[RawJob
     try:
         items, _ = llm.search_json(PROMPT.format(query=query))
         return _to_jobs(items, host, countries[0] if len(countries) == 1 else NA)
-    except llm.BudgetExceeded:
+    except llm.StopUser:
         raise
     except Exception as exc:
         log.warning("Google site search %s failed: %s", host, exc)

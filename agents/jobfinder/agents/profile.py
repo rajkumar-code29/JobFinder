@@ -33,28 +33,32 @@ def _pick(files: list[dict], prefer: tuple[str, ...]) -> list[dict]:
     return sorted(files, key=lambda f: next((i for i, ext in enumerate(prefer) if f["name"].lower().endswith(ext)), 99))
 
 
-def load_parent_files() -> dict:
-    resume_files = _pick(db.list_files("resume", db.PARENT_BUCKET), (".docx", ".pdf"))
-    cover_files = _pick(db.list_files("cover_letter", db.PARENT_BUCKET), (".docx", ".pdf", ".txt"))
+def load_parent_files(user_id: str) -> dict | None:
+    """Parent documents live in parent/<user_id>/resume/ and parent/<user_id>/cover_letter/."""
+    resume_files = _pick(db.list_files(f"{user_id}/resume", db.PARENT_BUCKET), (".docx", ".pdf"))
+    cover_files = _pick(db.list_files(f"{user_id}/cover_letter", db.PARENT_BUCKET), (".docx", ".pdf", ".txt"))
     if not resume_files:
-        raise RuntimeError("No parent resume uploaded. Upload it in the app (Settings → Parent documents).")
-    out = {"resume_files": [f"resume/{f['name']}" for f in resume_files]}
+        return None
+    out = {"resume_files": [f"{user_id}/resume/{f['name']}" for f in resume_files]}
     docx = next((f for f in resume_files if f["name"].lower().endswith(".docx")), None)
-    out["resume_docx"] = f"resume/{docx['name']}" if docx else None
-    out["cover_letter"] = f"cover_letter/{cover_files[0]['name']}" if cover_files else None
+    out["resume_docx"] = f"{user_id}/resume/{docx['name']}" if docx else None
+    out["cover_letter"] = f"{user_id}/cover_letter/{cover_files[0]['name']}" if cover_files else None
     return out
 
 
-def run(run: db.PipelineRun) -> dict:
+def run(run: db.PipelineRun) -> dict | None:
+    """Returns the profile, or None when the user hasn't uploaded a resume yet."""
+    files = load_parent_files(run.user_id)
+    if files is None:
+        return None
     with run.agent("profile", message="Reading parent resume and cover letter") as task:
-        files = load_parent_files()
         primary = files["resume_docx"] or files["resume_files"][0]
         resume_bytes = db.download(primary, db.PARENT_BUCKET)
         cover_bytes = db.download(files["cover_letter"], db.PARENT_BUCKET) if files["cover_letter"] else b""
         r_hash = hashlib.sha256(resume_bytes).hexdigest()
         c_hash = hashlib.sha256(cover_bytes).hexdigest() if cover_bytes else "NA"
 
-        profile = db.get_profile()
+        profile = db.get_profile(run.user_id)
         if profile["resume_hash"] == r_hash and profile["cover_letter_hash"] == c_hash and profile["structured"]:
             task.message = "Parent documents unchanged – using cached profile"
             return {**profile, **files}
@@ -63,14 +67,14 @@ def run(run: db.PipelineRun) -> dict:
         cover_text = docs.any_text(files["cover_letter"], cover_bytes) if cover_bytes else "NA"
         data = llm.ask_json(PROMPT.format(resume=resume_text[:30000], cover=cover_text[:12000]), system=SYSTEM)
         values = {
-            "resume_filename": primary.split("/", 1)[1],
+            "resume_filename": primary.rsplit("/", 1)[1],
             "resume_hash": r_hash, "cover_letter_hash": c_hash,
             "resume_text": resume_text, "cover_letter_text": cover_text,
             "summary": data.get("summary") or "NA",
             "skills": data.get("skills") or [], "titles": data.get("titles") or [],
             "structured": data,
         }
-        db.update_profile(values)
+        db.update_profile(run.user_id, values)
         task.message = f"Profile parsed: {len(values['skills'])} skills, fits {', '.join(values['titles'][:3])}"
         return {**profile, **values, **files}
 

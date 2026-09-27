@@ -68,7 +68,7 @@ def run(run: db.PipelineRun, job: dict, profile: dict, report: dict, target: int
                 break
 
         stem = Path(profile["resume_filename"]).stem
-        prefix = job["job_id"]
+        prefix = db.job_dir(job)
         files = dict(job.get("files") or {})
         files["resume_docx"] = db.upload(f"{prefix}/{stem}.docx", current, docs.DOCX_MIME)
         try:

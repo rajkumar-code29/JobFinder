@@ -60,7 +60,7 @@ def run(run: db.PipelineRun, job: dict) -> None:
         if not found:
             try:
                 data, sources = llm.search_json(PROMPT.format(title=job["title"], company=job["company"], location=job["location"]))
-            except llm.BudgetExceeded:
+            except llm.StopUser:
                 raise
             except Exception:
                 data, sources = {}, []

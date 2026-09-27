@@ -8,6 +8,9 @@ import 'models.dart';
 
 SupabaseClient get supa => Supabase.instance.client;
 
+/// Every user's data lives under their own id (database rows and storage folders).
+String get uid => supa.auth.currentUser!.id;
+
 class Api {
   static const jobsBucket = 'jobs';
   static const parentBucket = 'parent';
@@ -67,9 +70,11 @@ class Api {
     await launchUrl(Uri.parse(url), mode: LaunchMode.externalApplication);
   }
 
+  /// Parent documents live in `parent/<uid>/resume/` and `parent/<uid>/cover_letter/`.
   static Future<List<String>> parentFiles(String folder) async {
-    final items = await supa.storage.from(parentBucket).list(path: folder);
-    return items.where((f) => f.id != null).map((f) => '$folder/${f.name}').toList();
+    final dir = '$uid/$folder';
+    final items = await supa.storage.from(parentBucket).list(path: dir);
+    return items.where((f) => f.id != null).map((f) => '$dir/${f.name}').toList();
   }
 
   static Future<void> replaceParent(String folder, List<(String, Uint8List)> files) async {
@@ -77,7 +82,7 @@ class Api {
     if (old.isNotEmpty) await supa.storage.from(parentBucket).remove(old);
     for (final (name, bytes) in files) {
       await supa.storage.from(parentBucket).uploadBinary(
-            '$folder/$name',
+            '$uid/$folder/$name',
             bytes,
             fileOptions: FileOptions(upsert: true, contentType: _mime(name)),
           );
@@ -92,14 +97,42 @@ class Api {
   }
 
   // ---------------------------------------------------------------- settings & profile
-  static Future<Map<String, dynamic>> settings() => supa.from('settings').select().eq('id', 1).single();
+  static Future<Map<String, dynamic>> settings() => supa.from('settings').select().eq('user_id', uid).single();
 
   static Future<void> saveSettings(Map<String, dynamic> values) =>
-      supa.from('settings').update(values).eq('id', 1);
+      supa.from('settings').update(values).eq('user_id', uid);
 
   static Future<Map<String, dynamic>> profile() => supa
       .from('profile')
       .select('resume_filename,summary,skills,titles,updated_at,structured')
-      .eq('id', 1)
+      .eq('user_id', uid)
       .single();
+
+  /// Per-user limits set by the owner (read-only for the user).
+  static Future<Map<String, dynamic>?> account() =>
+      supa.from('accounts').select().eq('user_id', uid).maybeSingle();
+
+  // ---------------------------------------------------------------- API keys
+  // Key values are write-only: the database never returns them to the app, only the last 4 characters.
+  static const _keyColumns = 'id,provider,label,app_id,hint,priority,exhausted_until,last_error,last_used_at,created_at';
+
+  static Future<List<Map<String, dynamic>>> apiKeys() =>
+      supa.from('api_keys').select(_keyColumns).order('provider').order('priority').order('created_at');
+
+  static Future<void> addApiKey({
+    required String provider,
+    required String key,
+    String label = '',
+    String? appId,
+    int priority = 0,
+  }) =>
+      supa.from('api_keys').insert({
+        'provider': provider,
+        'key_value': key.trim(),
+        'label': label.trim(),
+        'app_id': appId?.trim(),
+        'priority': priority,
+      });
+
+  static Future<void> deleteApiKey(String id) => supa.from('api_keys').delete().eq('id', id);
 }

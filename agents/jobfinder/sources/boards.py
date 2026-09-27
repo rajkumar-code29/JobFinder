@@ -2,6 +2,7 @@
 anything else (LinkedIn, Indeed, a custom careers page…) is searched through Gemini + Google Search."""
 from __future__ import annotations
 
+import copy
 import logging
 import re
 from urllib.parse import urlparse
@@ -98,11 +99,18 @@ def workable(slug: str) -> list[RawJob]:
 FETCHERS = {"greenhouse": greenhouse, "lever": lever, "ashby": ashby, "workable": workable}
 
 
+_board_cache: dict[str, list[RawJob]] = {}
+
+
 def fetch_board(url: str) -> tuple[list[RawJob], bool]:
-    """Returns (jobs, handled). handled=False means the URL needs the Google-search fallback."""
+    """Returns (jobs, handled). handled=False means the URL needs the Google-search fallback.
+    Results are cached per run, so users following the same company share one API call."""
     hit = detect(url)
     if not hit:
         return [], False
     ats, slug = hit
     slug = re.sub(r"[^A-Za-z0-9_.-]", "", slug)
-    return FETCHERS[ats](slug), True
+    cache_key = f"{ats}:{slug}"
+    if cache_key not in _board_cache:
+        _board_cache[cache_key] = FETCHERS[ats](slug)
+    return [copy.copy(j) for j in _board_cache[cache_key]], True

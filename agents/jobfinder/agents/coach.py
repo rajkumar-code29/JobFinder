@@ -43,7 +43,7 @@ def run(run: db.PipelineRun, job: dict, profile_brief: str, report: dict) -> Non
         pack["mcq"] = [q for q in pack.get("mcq", [])
                        if isinstance(q.get("options"), list) and len(q["options"]) >= 2
                        and isinstance(q.get("answer_index"), int) and 0 <= q["answer_index"] < len(q["options"])]
-        path = db.upload(f"{job['job_id']}/interview.json", json.dumps(pack, indent=2, ensure_ascii=False).encode(), "application/json")
+        path = db.upload(f"{db.job_dir(job)}/interview.json", json.dumps(pack, indent=2, ensure_ascii=False).encode(), "application/json")
         files = {**(job.get("files") or {}), "interview": path}
         db.update_job(job["job_id"], {"files": files})
         job["files"] = files

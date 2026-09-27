@@ -45,6 +45,7 @@ Every captured job gets its own folder `jobs/<job_id>/`:
 ### 1. Supabase
 1. Create a free project at <https://supabase.com>.
 2. **SQL Editor** → paste and run [`supabase/migrations/001_init.sql`](supabase/migrations/001_init.sql).
+   After creating your user (step 3), also run [`002_multi_user.sql`](supabase/migrations/002_multi_user.sql).
    Check: **Table Editor** shows `settings, profile, jobs, pipeline_runs, agent_runs`; **Storage** shows buckets `parent` and `jobs`.
 3. Left sidebar **Authentication → Users → Add user → Create new user**, tick **Auto Confirm User**.
    This is your *app* login. It is separate from your supabase.com account, but it can use the same email/password.
@@ -69,7 +70,9 @@ Every captured job gets its own folder `jobs/<job_id>/`:
    `SUPABASE_URL`, `SUPABASE_SERVICE_ROLE_KEY`, `SUPABASE_ANON_KEY`, `GEMINI_API_KEY`,
    `ADZUNA_APP_ID`, `ADZUNA_APP_KEY`, `RAPIDAPI_KEY` (optional),
    `CLOUDFLARE_API_TOKEN`, `CLOUDFLARE_ACCOUNT_ID` (step 4).
-3. Optional **Variables**: `GEMINI_MODEL`, `GEMINI_FAST_MODEL`, `LLM_MAX_CALLS_PER_RUN`.
+   For fallback keys use the list forms instead/as well: `GEMINI_API_KEYS=k1,k2`, `ADZUNA_KEYS=id1:key1,id2:key2`,
+   `RAPIDAPI_KEYS=k1,k2` (see *Users & API keys* below).
+3. Optional **Variables**: `GEMINI_MODEL`, `GEMINI_FAST_MODEL`.
 4. **Actions → Job agents (hourly) → Run workflow** to test. After that it runs every hour.
 
 ### 4. Web app on your subdomain (Cloudflare Pages, free)
@@ -92,11 +95,13 @@ Sign in → **Settings → Parent documents** → upload your resume (**.docx** 
 
 Or from the command line:
 ```bash
-cd agents && python -m jobfinder.upload_parent --resume ~/Documents/Me_Resume.docx ~/Documents/Me_Resume.pdf --cover ~/Documents/Cover\ Letter.docx
+cd agents && python -m jobfinder.upload_parent --email you@example.com --resume ~/Documents/Me_Resume.docx ~/Documents/Me_Resume.pdf --cover ~/Documents/Cover\ Letter.docx
 ```
 
 ### 6. iPhone app
-> If this folder is inside iCloud-synced `~/Documents`, iOS builds fail with *"Failed to codesign Flutter.framework … resource fork, Finder information, or similar detritus"*. Move the repo somewhere iCloud doesn't sync (e.g. `~/Developer/JobFinder`).
+> Keep this repo outside iCloud-synced folders (e.g. `~/Developer/JobFinder`, not `~/Documents`). iCloud offloads
+> files when the disk is low, which hangs Python/git, and its file attributes break iOS code signing
+> (*"resource fork, Finder information, or similar detritus not allowed"*).
 
 ```bash
 cd app && cp env.example.json env.json   # fill in URL + anon key
@@ -108,6 +113,34 @@ You can also open `https://jobs.<your-domain>` in Safari → Share → **Add to 
 
 ---
 
+## Users & API keys
+
+**Each user only sees their own data.** Jobs, files, settings, API keys and agent activity are isolated by
+Supabase row-level security, and files live under `parent/<user-id>/…` and `jobs/<user-id>/<job-id>/…`.
+As the Supabase project owner you can still see everything in the Supabase dashboard.
+
+**Add a user:** Supabase → Authentication → Users → Add user (tick *Auto Confirm User*). Their settings are
+created automatically. They sign in, upload their resume in Settings, and add their own API keys.
+
+**Limits are per user:**
+- Each user's agents use **their own keys first**. The shared keys (GitHub secrets) are only used for the owner,
+  or for users you allow:
+  ```sql
+  update accounts set use_shared_keys = true, llm_calls_per_run = 20
+  where user_id = (select id from auth.users where email = 'friend@example.com');
+  ```
+- `llm_calls_per_run` caps each user's Gemini calls per hourly run (owner 60, others 40 by default).
+- Pause a user: `update accounts set enabled = false where …`.
+
+**Key fallback:** keys are tried in order. When one hits its limit the next is used, and the spent key is parked
+until it resets (Gemini: midnight Pacific; Adzuna: next hour or next day; RapidAPI monthly quota: the 1st), so
+later runs skip it. Invalid keys are parked for 24 h. Users see each key's status in Settings → API keys.
+- Gemini's free quota belongs to a Google Cloud **project**, so extra keys only add quota if they come from
+  different projects.
+- Check each provider's terms before using several free accounts to get around its limits.
+  Google and Adzuna don't allow it, and they can suspend accounts that do.
+- Everyone's agents run on the owner's GitHub Actions minutes.
+
 ## Local development
 ```bash
 # agents
@@ -115,6 +148,7 @@ cd agents && python3 -m venv .venv && .venv/bin/pip install -r requirements.txt
 cp .env.example .env    # fill in
 .venv/bin/python -m jobfinder.pipeline --trigger manual --all-sources
 .venv/bin/python -m jobfinder.pipeline --job JF-20260927-ABCDE    # reprocess one job
+.venv/bin/python -m jobfinder.pipeline --user you@example.com      # one user only
 
 # app
 cd app && flutter run -d chrome --dart-define-from-file=env.json
@@ -122,9 +156,9 @@ cd app && flutter run -d chrome --dart-define-from-file=env.json
 
 ## Free-tier budget notes
 - Each fully processed job ≈ 6–8 Gemini calls (score, salary, 1–2 tailor passes + re-scores, interview, cover letter).
-- `max_jobs_per_run` (Settings, default 3) and `LLM_MAX_CALLS_PER_RUN` (default 60) cap usage. Jobs that don't
+- `max_jobs_per_run` (Settings, default 3) and each user's `llm_calls_per_run` cap usage. Jobs that don't
   fit in a run stay queued and resume from their last finished stage.
-- If you hit Gemini's daily limit, lower `max_jobs_per_run` or set `GEMINI_MODEL=gemini-2.5-flash-lite`.
+- If you hit Gemini's daily limit, add a fallback key, lower `max_jobs_per_run`, or set `GEMINI_MODEL=gemini-2.5-flash-lite`.
 - GitHub Actions minutes: unlimited on a **public** repo, 2,000 min/month on a private one. A scan-only run takes
   ~2 min, and a run that processes jobs takes up to ~8 min (Gemini free-tier pacing), so hourly on a private repo can exceed
   2,000 min. Options: make the repo public (no secrets or personal files live in it: keys are Action secrets and

@@ -40,7 +40,7 @@ def run(run: db.PipelineRun, job: dict, profile: dict, profile_brief: str) -> No
         header = {"name": s.get("name"), "email": s.get("email"), "phone": s.get("phone"),
                   "location": s.get("location"), "link": (s.get("links") or [None])[0]}
         data = docs.cover_letter_docx(header, letter)
-        prefix = job["job_id"]
+        prefix = db.job_dir(job)
         files = {**(job.get("files") or {}), "cover_letter_docx": db.upload(f"{prefix}/Cover Letter.docx", data, docs.DOCX_MIME)}
         try:
             pdf = docs.docx_to_pdf(data, "Cover Letter")

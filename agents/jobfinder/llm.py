@@ -1,39 +1,68 @@
-"""Thin Gemini wrapper: JSON output, Google-Search grounding, free-tier pacing and a per-run call budget."""
+"""Thin Gemini wrapper: JSON output, Google-Search grounding, per-user key pool with fallback,
+per-key pacing and a per-user call budget. Call `activate()` before processing each user."""
 from __future__ import annotations
 
 import json
 import logging
 import re
 import time
+from datetime import timedelta
 
 from google import genai
 from google.genai import errors, types
 
 from . import config
+from .keys import ALL_SCOPES, KeyPool, NoKeyAvailable, next_pacific_midnight, utcnow
 
 log = logging.getLogger("jobfinder")
 
-_client = genai.Client(api_key=config.GEMINI_API_KEY)
-_last_call = 0.0
+
+class StopUser(RuntimeError):
+    """Stop LLM work for the current user this run; queued jobs continue next run."""
+
+
+class BudgetExceeded(StopUser):
+    pass
+
+
+class KeysExhausted(StopUser):
+    pass
+
+
+_pool: KeyPool | None = None
+_budget = 0
 calls_made = 0
+_clients: dict[str, genai.Client] = {}
+_last_call: dict[str, float] = {}
 
 
-class BudgetExceeded(RuntimeError):
-    """Raised when this run has used its LLM budget; remaining work waits for the next run."""
+def activate(pool: KeyPool, budget: int) -> None:
+    global _pool, _budget, calls_made
+    _pool, _budget, calls_made = pool, budget, 0
 
 
-def _pace() -> None:
-    global _last_call, calls_made
-    if calls_made >= config.LLM_MAX_CALLS_PER_RUN:
-        raise BudgetExceeded(f"LLM call budget of {config.LLM_MAX_CALLS_PER_RUN} used for this run")
-    wait = config.GEMINI_MIN_INTERVAL_SEC - (time.monotonic() - _last_call)
+def _client(key) -> genai.Client:
+    if key.fingerprint not in _clients:
+        _clients[key.fingerprint] = genai.Client(api_key=key.value)
+    return _clients[key.fingerprint]
+
+
+def _pace(key) -> None:
+    wait = config.GEMINI_MIN_INTERVAL_SEC - (time.monotonic() - _last_call.get(key.fingerprint, 0.0))
     if wait > 0:
         time.sleep(wait)
-    _last_call = time.monotonic()
-    calls_made += 1
+    _last_call[key.fingerprint] = time.monotonic()
+
+
+def _retry_delay(msg: str) -> float:
+    m = re.search(r"retry in ([\d.]+)s", msg) or re.search(r"retryDelay['\"]?:\s*['\"]?(\d+)s", msg)
+    return float(m.group(1)) + 2 if m else 30.0
 
 
 def _generate(prompt: str, *, system: str | None, model: str, json_mode: bool, search: bool, temperature: float):
+    global calls_made
+    if _pool is None:
+        raise RuntimeError("llm.activate() was not called")
     cfg = types.GenerateContentConfig(system_instruction=system, temperature=temperature)
     if search:
         # Grounding and JSON mime type can't be combined; we parse JSON out of the text instead.
@@ -41,21 +70,48 @@ def _generate(prompt: str, *, system: str | None, model: str, json_mode: bool, s
     elif json_mode:
         cfg.response_mime_type = "application/json"
 
-    for attempt in range(5):
-        _pace()
+    server_errors = 0
+    for _ in range(len(_pool.keys) * 4 + 6):
+        if calls_made >= _budget:
+            raise BudgetExceeded(f"Gemini call budget of {_budget} used for this run")
         try:
-            return _client.models.generate_content(model=model, contents=prompt, config=cfg)
+            key = _pool.get(model)
+        except NoKeyAvailable:
+            wait = _pool.seconds_until_free(model)
+            if wait is not None and wait <= 120:
+                log.info("All Gemini keys cooling down, waiting %.0fs", wait)
+                time.sleep(wait + 1)
+                continue
+            if not _pool:
+                raise KeysExhausted("No Gemini API key: add one in Settings → API keys")
+            raise KeysExhausted(f"All Gemini keys have hit their limit for {model}; they reset at midnight Pacific")
+
+        _pace(key)
+        calls_made += 1
+        try:
+            resp = _client(key).models.generate_content(model=model, contents=prompt, config=cfg)
+            _pool.used(key)
+            return resp
         except errors.APIError as exc:
-            code = getattr(exc, "code", None)
-            if code in (429, 500, 503) and attempt < 4:
-                delay = min(90, 15 * (attempt + 1))
-                m = re.search(r"retry in ([\d.]+)s", str(exc))
-                if m:
-                    delay = float(m.group(1)) + 2
-                log.warning("Gemini %s, retrying in %.0fs", code, delay)
-                time.sleep(delay)
+            code, msg = getattr(exc, "code", None), str(exc)
+            if code == 429:
+                calls_made -= 1  # rejected calls don't count against the budget
+                if "PerDay" in msg or "per day" in msg.lower():
+                    _pool.park(key, model, next_pacific_midnight(), "daily free-tier quota reached")
+                else:
+                    _pool.cool(key, model, _retry_delay(msg))
+                    log.info("Gemini %s per-minute limit, switching key", key.name)
+                continue
+            if code in (400, 401, 403) and re.search(r"API[_ ]KEY|api key|PERMISSION_DENIED|not valid", msg, re.I):
+                calls_made -= 1
+                _pool.park(key, ALL_SCOPES, utcnow() + timedelta(hours=24), f"rejected by Gemini (HTTP {code}): invalid or unauthorized key")
+                continue
+            if code in (500, 502, 503, 504) and server_errors < 3:
+                server_errors += 1
+                time.sleep(10 * server_errors)
                 continue
             raise
+    raise KeysExhausted("Gemini kept rejecting requests; try again next run")
 
 
 def _parse_json(text: str):

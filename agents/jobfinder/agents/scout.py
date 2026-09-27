@@ -33,16 +33,16 @@ def _hour() -> int:
     return datetime.now(timezone.utc).hour
 
 
-def collect(run: db.PipelineRun, settings: dict, roles: list[str], force_all: bool) -> list[RawJob]:
+def collect(run: db.PipelineRun, settings: dict, roles: list[str], force_all: bool, pools: dict) -> list[RawJob]:
     countries = [c.lower() for c in settings["countries"]] or ["us"]
     src = settings.get("sources") or {}
     hour = _hour()
     plan = [
         # (name, enabled, due this hour?, fetcher)
-        ("adzuna", src.get("adzuna", True), True, lambda: aggregators.adzuna(roles, countries)),
+        ("adzuna", src.get("adzuna", True), True, lambda: aggregators.adzuna(roles, countries, pools["adzuna"])),
         ("arbeitnow", src.get("arbeitnow", True), True, lambda: aggregators.arbeitnow(roles, countries)),
         ("remotive", src.get("remotive", True) and settings["remote_ok"], hour % 6 == 0, lambda: aggregators.remotive(roles, countries)),
-        ("jsearch", src.get("jsearch", True), hour == 6, lambda: aggregators.jsearch(roles, countries)),
+        ("jsearch", src.get("jsearch", True), hour == 6, lambda: aggregators.jsearch(roles, countries, pools["rapidapi"])),
         ("google_search", src.get("google_search", True), hour % 4 == 0, lambda: google_search.search_roles(roles, countries)),
     ]
     raw: list[RawJob] = []
@@ -105,23 +105,23 @@ def rate(jobs: list[RawJob], settings: dict, profile_brief: str, roles: list[str
     return out
 
 
-def run(run: db.PipelineRun, settings: dict, profile: dict, profile_brief: str, force_all: bool = False) -> int:
+def run(run: db.PipelineRun, settings: dict, profile: dict, profile_brief: str, pools: dict, force_all: bool = False) -> int:
     roles = settings.get("target_roles") or (profile.get("titles") or [])[:3]
     if not roles:
         raise RuntimeError("No target roles: set them in Settings or upload a resume first")
 
-    raw = collect(run, settings, roles, force_all)
+    raw = collect(run, settings, roles, force_all, pools)
     run.scanned += len(raw)
     run.note(f"Scanned {len(raw)} postings")
 
     # De-duplicate against the database and across sources.
-    fps = db.recent_fingerprints()
+    fps = db.recent_fingerprints(run.user_id)
     fresh: list[RawJob] = []
     by_source: dict[str, list[RawJob]] = {}
     for j in raw:
         by_source.setdefault(j.source, []).append(j)
     for source, items in by_source.items():
-        known = db.existing_keys(source, [j.external_id for j in items])
+        known = db.existing_keys(run.user_id, source, [j.external_id for j in items])
         for j in items:
             fp = db.fingerprint(j.company, j.title)
             if j.external_id in known or fp in fps:
@@ -144,7 +144,7 @@ def run(run: db.PipelineRun, settings: dict, profile: dict, profile_brief: str, 
         if len(job.description) < 800 or job.description == NA:
             _enrich(job)
         row = job.as_row()
-        row.update(job_id=new_job_id(), relevance=score, relevance_reason=why, status="new")
+        row.update(job_id=new_job_id(), user_id=run.user_id, relevance=score, relevance_reason=why, status="new")
         if job.salary_text != NA:
             row["salary_source"] = "job_posting"
         if est := job.extra.get("adzuna_estimate"):

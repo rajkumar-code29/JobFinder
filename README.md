@@ -73,12 +73,18 @@ Every captured job gets its own folder `jobs/<job_id>/`:
 4. **Actions → Job agents (hourly) → Run workflow** to test. After that it runs every hour.
 
 ### 4. Web app on your subdomain (Cloudflare Pages, free)
-1. Cloudflare dashboard → **Workers & Pages → Create → Pages** → project name `jobfinder`
-   (or run the workflow once; it creates it).
-2. Create an API token with *Cloudflare Pages: Edit* → save as `CLOUDFLARE_API_TOKEN`; save your account id.
-3. Push to `main` (or run **Deploy web app**) → it builds Flutter web and deploys.
-4. Pages project → **Custom domains** → add `jobs.<your-domain>`. If your domain's DNS isn't on Cloudflare,
-   add the CNAME it shows you at your registrar.
+1. Sign up / log in at <https://dash.cloudflare.com>.
+2. **Account ID**: shown in the dashboard URL (`dash.cloudflare.com/<account-id>/…`) and on
+   **Workers & Pages** (right sidebar) → GitHub secret `CLOUDFLARE_ACCOUNT_ID`.
+3. **API token**: profile icon → **My Profile → API Tokens → Create Token → Create Custom Token**,
+   permission **Account · Cloudflare Pages · Edit**, account resources = your account → GitHub secret `CLOUDFLARE_API_TOKEN`.
+4. GitHub → **Actions → Deploy web app → Run workflow**. The first run creates the `jobfinder` Pages project
+   and deploys; the app is then live at `https://jobfinder.pages.dev` (Cloudflare may add a suffix if taken).
+5. Cloudflare → **Workers & Pages → jobfinder → Custom domains → Set up a custom domain** → `jobs.<your-domain>`.
+   - Domain's DNS on Cloudflare: the record is created for you.
+   - DNS elsewhere (GoDaddy, Namecheap, Google/Squarespace…): add at your registrar a **CNAME** record,
+     name `jobs`, value `jobfinder.pages.dev` (use the exact value Cloudflare shows). Activation takes minutes to a few hours.
+6. Supabase → **Authentication → URL Configuration** → Site URL `https://jobs.<your-domain>`.
 
 ### 5. Upload your parent documents
 Sign in → **Settings → Parent documents** → upload your resume (**.docx** is required for tailoring; add the

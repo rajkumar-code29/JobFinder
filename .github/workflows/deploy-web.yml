@@ -24,9 +24,16 @@ jobs:
           --dart-define=SUPABASE_URL=${{ secrets.SUPABASE_URL }}
           --dart-define=SUPABASE_ANON_KEY=${{ secrets.SUPABASE_ANON_KEY }}
           --dart-define=GITHUB_REPO=${{ github.repository }}
+      - name: Create Cloudflare Pages project (first run only)
+        uses: cloudflare/wrangler-action@v3
+        continue-on-error: true   # fails harmlessly once the project exists
+        with:
+          apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          accountId: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          command: pages project create jobfinder --production-branch=main
       - name: Publish to Cloudflare Pages
         uses: cloudflare/wrangler-action@v3
         with:
           apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           accountId: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
-          command: pages deploy app/build/web --project-name=jobfinder --branch=main
+          command: pages deploy app/build/web --project-name=jobfinder --branch=main --commit-dirty=true

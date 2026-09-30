@@ -183,6 +183,10 @@ cd app && flutter run -d chrome --dart-define-from-file=env.json
 - `max_jobs_per_run` (Settings, default 3) and each user's `llm_calls_per_run` cap usage. Jobs that don't
   fit in a run stay queued and resume from their last finished stage.
 - If you hit Gemini's daily limit, add a fallback key, lower `max_jobs_per_run`, or set `GEMINI_MODEL` to the flash-lite model.
+- Free-tier limits differ per model and change over time. On *too many requests* the agents widen the gap between
+  calls (up to 60 s) and wait up to 4 min per request. If the main model's daily or free-tier limit is used up on every
+  key, the rest of the run uses the light model, and the run log names Google's quota (e.g. `…PerDay…, limit 20`).
+  Your real limits are shown in AI Studio under *Usage & limits*.
 - Google retires Gemini versions over time. If a model is retired, the agents switch to the newest model of the same
   family and say so in the run log (Agents → Runs); update `GEMINI_MODEL` / `GEMINI_FAST_MODEL` when you see that.
 - GitHub Actions minutes: unlimited on a **public** repo, 2,000 min/month on a private one. A scan-only run takes

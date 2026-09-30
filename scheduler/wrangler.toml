@@ -1,0 +1,17 @@
+# Cloudflare Worker whose only job is to start the "Job agents" GitHub workflow on time every hour.
+# GitHub's own cron is best-effort (often hours late); Cloudflare Cron Triggers are punctual and free.
+# Deployed by .github/workflows/deploy-scheduler.yml, which also sets GITHUB_REPO and the token secret.
+name = "jobfinder-scheduler"
+main = "src/index.js"
+compatibility_date = "2026-09-01"
+workers_dev = false          # no public URL – it only runs on its schedule
+
+[triggers]
+crons = ["7 * * * *"]        # every hour at :07 UTC
+
+[vars]
+WORKFLOW = "agents.yml"
+BRANCH = "main"
+
+[observability]
+enabled = true               # logs in Cloudflare → Workers → jobfinder-scheduler → Logs

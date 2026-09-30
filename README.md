@@ -100,6 +100,17 @@ Every captured job gets its own folder `jobs/<job_id>/`:
      name `jobs`, value `jobfinder.pages.dev` (use the exact value Cloudflare shows). Activation takes minutes to a few hours.
 6. Supabase → **Authentication → URL Configuration** → Site URL `https://jobs.<your-domain>`.
 
+### 4b. Punctual hourly runs (Cloudflare scheduler, free)
+GitHub's own cron is best-effort and often hours late, so a tiny Cloudflare Worker (`scheduler/`) starts the
+agents workflow every hour at :07 UTC. GitHub's cron stays as a 3-hourly backup; duplicate runs are skipped.
+1. GitHub → profile → **Settings → Developer settings → Personal access tokens → Fine-grained tokens → Generate new token**:
+   repository access **Only select repositories → JobFinder**, permission **Actions: Read and write**. Pick an
+   expiry and note it (the Worker stops starting runs when the token expires).
+   Save it as the GitHub secret **`GH_DISPATCH_TOKEN`**.
+2. Cloudflare → **My Profile → API Tokens** → edit the deploy token → add **Account · Workers Scripts · Edit**.
+3. GitHub → **Actions → Deploy hourly scheduler → Run workflow**.
+   Logs: Cloudflare → Workers & Pages → `jobfinder-scheduler` → Logs.
+
 ### 5. Upload your parent documents
 Sign in → **Settings → Parent documents** → upload your resume (**.docx** is required for tailoring; add the
 .pdf too) and your master cover letter. Set countries, roles and board links, then **Save**.

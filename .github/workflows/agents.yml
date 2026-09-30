@@ -1,10 +1,17 @@
 name: Job agents (hourly)
 
 on:
+  # The punctual hourly trigger is the Cloudflare Worker in scheduler/ (GitHub's cron is often hours late).
+  # This cron is only a backup; the pipeline skips a scheduled run if one already ran in the last 40 minutes.
   schedule:
-    - cron: "7 * * * *"          # every hour at :07 (GitHub may delay scheduled runs a few minutes)
+    - cron: "37 */3 * * *"
   workflow_dispatch:
     inputs:
+      trigger:
+        description: "Run type (the scheduler sends 'schedule', which keeps per-source throttles)"
+        type: choice
+        options: [manual, schedule]
+        default: manual
       job:
         description: "Reprocess one job id (optional, e.g. JF-20260927-ABCDE)"
         required: false
@@ -49,7 +56,7 @@ jobs:
           GEMINI_MODEL: ${{ vars.GEMINI_MODEL }}
           GEMINI_FAST_MODEL: ${{ vars.GEMINI_FAST_MODEL }}
         run: |
-          ARGS="--trigger ${{ github.event_name == 'workflow_dispatch' && 'manual' || 'schedule' }}"
+          ARGS="--trigger ${{ inputs.trigger || (github.event_name == 'workflow_dispatch' && 'manual' || 'schedule') }}"
           if [ -n "${{ inputs.job }}" ]; then ARGS="$ARGS --job ${{ inputs.job }}"; fi
           if [ "${{ inputs.all_sources }}" = "true" ]; then ARGS="$ARGS --all-sources"; fi
           python -m jobfinder.pipeline $ARGS

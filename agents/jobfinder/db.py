@@ -165,6 +165,12 @@ class AgentTask:
         self.message = message
 
 
+def scheduled_run_since(minutes: int) -> bool:
+    since = (datetime.now(timezone.utc) - timedelta(minutes=minutes)).isoformat()
+    rows = sb.table("pipeline_runs").select("id").eq("trigger", "schedule").gte("started_at", since).limit(1).execute().data
+    return bool(rows)
+
+
 def expire_stale_agent_runs() -> None:
     """A killed workflow leaves rows stuck in 'running'; close them so the dashboard stays honest."""
     cutoff = (datetime.now(timezone.utc) - timedelta(hours=2)).isoformat()

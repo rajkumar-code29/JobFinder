@@ -118,6 +118,10 @@ def main(argv=None) -> int:
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
 
     db.expire_stale_agent_runs()
+    if args.trigger == "schedule" and not (args.job or args.user) and db.scheduled_run_since(minutes=40):
+        # The Cloudflare scheduler and GitHub's backup cron can both fire; one scheduled run per slot is enough.
+        log.info("A scheduled run already happened in the last 40 minutes – skipping.")
+        return 0
     store = KeyStateStore()
     accounts = db.active_accounts()
     only_job = None

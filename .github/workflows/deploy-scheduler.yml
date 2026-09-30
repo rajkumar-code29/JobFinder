@@ -1,0 +1,41 @@
+name: Deploy hourly scheduler
+
+on:
+  push:
+    branches: [main]
+    paths: ["scheduler/**", ".github/workflows/deploy-scheduler.yml"]
+  workflow_dispatch:
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+
+      # Readable annotations instead of a wall of wrangler output (no secret values are printed).
+      - name: Check secrets
+        env:
+          CF_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CF_ACCOUNT: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          GH_DISPATCH_TOKEN: ${{ secrets.GH_DISPATCH_TOKEN }}
+        run: |
+          [ -n "$GH_DISPATCH_TOKEN" ] || { echo "::error::Secret GH_DISPATCH_TOKEN is missing (fine-grained GitHub token with Actions: read and write on this repo)"; exit 1; }
+          [ -n "$CF_TOKEN" ] && [ -n "$CF_ACCOUNT" ] || { echo "::error::CLOUDFLARE_API_TOKEN / CLOUDFLARE_ACCOUNT_ID missing"; exit 1; }
+          code=$(curl -s -o /tmp/wf.json -w "%{http_code}" -H "Authorization: Bearer $GH_DISPATCH_TOKEN" \
+            -H "Accept: application/vnd.github+json" "https://api.github.com/repos/${{ github.repository }}/actions/workflows/agents.yml")
+          [ "$code" = "200" ] || { echo "::error::GH_DISPATCH_TOKEN can't see this repo's workflows (HTTP $code). Give it access to ${{ github.repository }} with Actions: read and write."; exit 1; }
+          perms=$(curl -s -H "Authorization: Bearer $CF_TOKEN" "https://api.cloudflare.com/client/v4/accounts/$CF_ACCOUNT/workers/scripts" | jq -c '{success, errors: [.errors[]? | "\(.code) \(.message)"]}')
+          echo "$perms" | jq -e '.success' > /dev/null || { echo "::error::The Cloudflare token can't manage Workers: $perms. Edit the token and add Account › Workers Scripts › Edit."; exit 1; }
+
+      - name: Deploy Worker and set its token
+        working-directory: scheduler
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          GH_DISPATCH_TOKEN: ${{ secrets.GH_DISPATCH_TOKEN }}
+        run: |
+          set -o pipefail
+          npx --yes wrangler@4 deploy --var GITHUB_REPO:${{ github.repository }} 2>&1 | tee /tmp/deploy.log \
+            || { echo "::error::Wrangler: $(grep -iE 'error|✘' /tmp/deploy.log | tail -4 | tr '\n' ' ')"; exit 1; }
+          printf '%s' "$GH_DISPATCH_TOKEN" | npx --yes wrangler@4 secret put GH_DISPATCH_TOKEN 2>&1 | tail -2
+          echo "::notice::jobfinder-scheduler deployed – it starts 'Job agents' every hour at :07 UTC"

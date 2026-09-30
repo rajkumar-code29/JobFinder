@@ -31,8 +31,9 @@ if env("ADZUNA_APP_ID") and env("ADZUNA_APP_KEY"):
     SHARED_ADZUNA_KEYS.append((env("ADZUNA_APP_ID"), env("ADZUNA_APP_KEY")))
 SHARED_RAPIDAPI_KEYS = _split(env("RAPIDAPI_KEYS")) + _split(env("RAPIDAPI_KEY"))
 
-GEMINI_MODEL = env("GEMINI_MODEL", "gemini-2.5-flash")
-GEMINI_FAST_MODEL = env("GEMINI_FAST_MODEL", "gemini-2.5-flash-lite")
+# If Google retires one of these, llm.py switches to the newest model of the same family automatically.
+GEMINI_MODEL = env("GEMINI_MODEL", "gemini-3.5-flash")
+GEMINI_FAST_MODEL = env("GEMINI_FAST_MODEL", "gemini-3.5-flash-lite")
 GEMINI_MIN_INTERVAL_SEC = float(env("GEMINI_MIN_INTERVAL_SEC", "6"))  # per key
 
 NA = "NA"

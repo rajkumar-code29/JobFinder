@@ -171,7 +171,9 @@ cd app && flutter run -d chrome --dart-define-from-file=env.json
 - Each fully processed job ≈ 6–8 Gemini calls (score, salary, 1–2 tailor passes + re-scores, interview, cover letter).
 - `max_jobs_per_run` (Settings, default 3) and each user's `llm_calls_per_run` cap usage. Jobs that don't
   fit in a run stay queued and resume from their last finished stage.
-- If you hit Gemini's daily limit, add a fallback key, lower `max_jobs_per_run`, or set `GEMINI_MODEL=gemini-2.5-flash-lite`.
+- If you hit Gemini's daily limit, add a fallback key, lower `max_jobs_per_run`, or set `GEMINI_MODEL` to the flash-lite model.
+- Google retires Gemini versions over time. If a model is retired, the agents switch to the newest model of the same
+  family and say so in the run log (Agents → Runs); update `GEMINI_MODEL` / `GEMINI_FAST_MODEL` when you see that.
 - GitHub Actions minutes: unlimited on a **public** repo, 2,000 min/month on a private one. A scan-only run takes
   ~2 min, and a run that processes jobs takes up to ~8 min (Gemini free-tier pacing), so hourly on a private repo can exceed
   2,000 min. Options: make the repo public (no secrets or personal files live in it: keys are Action secrets and

@@ -51,21 +51,31 @@ def collect(run: db.PipelineRun, settings: dict, roles: list[str], force_all: bo
     for name, enabled, due, fetch in plan:
         if not enabled or not (due or (force_all and name != "jsearch")):
             continue
-        with run.agent("scout", message=f"Scanning {name}") as task:
-            found = fetch()
-            raw += found
-            task.message = f"{name}: {len(found)} postings"
+        try:
+            with run.agent("scout", message=f"Scanning {name}") as task:
+                found = fetch()
+                raw += found
+                task.message = f"{name}: {len(found)} postings"
+        except llm.StopUser:
+            raise
+        except Exception:
+            continue  # already logged as an agent error; the other sources still run
 
     for board in settings.get("job_boards") or []:
         url = (board or {}).get("url", "").strip()
         if not url or not board.get("enabled", True):
             continue
-        with run.agent("scout", message=f"Scanning board {url}") as task:
-            found, handled = boards.fetch_board(url, roles)
-            if not handled and (hour % 4 == 0 or force_all):
-                found = google_search.search_site(url, roles, countries)
-            raw += found
-            task.message = f"{url}: {len(found)} postings" + ("" if handled else " (via Google search)")
+        try:
+            with run.agent("scout", message=f"Scanning board {url}") as task:
+                found, handled = boards.fetch_board(url, roles)
+                if not handled and (hour % 4 == 0 or force_all):
+                    found = google_search.search_site(url, roles, countries)
+                raw += found
+                task.message = f"{url}: {len(found)} postings" + ("" if handled else " (via Google search)")
+        except llm.StopUser:
+            raise
+        except Exception:
+            continue  # e.g. a mistyped company slug – logged, the other boards still run
     return raw
 
 
@@ -97,10 +107,16 @@ def rate(jobs: list[RawJob], settings: dict, profile_brief: str, roles: list[str
         listing = "\n\n".join(
             f"[{i}] {j.title} @ {j.company} ({j.location})\n{j.description[:900]}" for i, j in enumerate(batch)
         )
-        res = llm.ask_json(RELEVANCE_PROMPT.format(
-            profile=profile_brief[:6000], roles=", ".join(roles),
-            countries=", ".join(country_name(normalize_location(c)) for c in settings["countries"]),
-            remote=settings["remote_ok"], jobs=listing), fast=True, temperature=0)
+        try:
+            res = llm.ask_json(RELEVANCE_PROMPT.format(
+                profile=profile_brief[:6000], roles=", ".join(roles),
+                countries=", ".join(country_name(normalize_location(c)) for c in settings["countries"]),
+                remote=settings["remote_ok"], jobs=listing), fast=True, temperature=0)
+        except llm.StopUser:
+            raise
+        except Exception as exc:  # one bad batch shouldn't lose the rest; these jobs get re-rated next run
+            log.warning("relevance batch failed: %s", exc)
+            continue
         scores = {int(r["i"]): r for r in res if isinstance(r, dict) and "i" in r} if isinstance(res, list) else {}
         for i, j in enumerate(batch):
             r = scores.get(i, {})

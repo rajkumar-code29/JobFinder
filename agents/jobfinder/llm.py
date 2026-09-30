@@ -29,11 +29,50 @@ class KeysExhausted(StopUser):
     pass
 
 
+class ModelUnavailable(StopUser):
+    pass
+
+
 _pool: KeyPool | None = None
 _budget = 0
 calls_made = 0
 _clients: dict[str, genai.Client] = {}
 _last_call: dict[str, float] = {}
+
+# Google retires model versions ("…is no longer available…"). When that happens we ask the API which models
+# exist and switch to the newest one of the same family for the rest of the run.
+_replacements: dict[str, str] = {}
+_retired: set[str] = set()
+notices: list[str] = []  # surfaced in the run log by the pipeline
+_MODEL_NAME = re.compile(r"^gemini-(\d+(?:\.\d+)?)-(flash-lite|flash|pro)(?:-(.+))?$")
+
+
+def _family(name: str) -> str | None:
+    m = _MODEL_NAME.match(name)
+    return m.group(2) if m else None
+
+
+def _rank(name: str) -> tuple:
+    """Newest version first; stable before preview/experimental/dated variants."""
+    m = _MODEL_NAME.match(name)
+    suffix = m.group(3) or ""
+    stable = suffix in ("", "latest")
+    return (float(m.group(1)), stable, suffix == "")
+
+
+def _find_replacement(model: str, key) -> str | None:
+    family = _family(model) or ("flash-lite" if "lite" in model else "flash")
+    available = []
+    for m in _client(key).models.list():
+        name = (m.name or "").removeprefix("models/")
+        actions = m.supported_actions or []
+        if _family(name) == family and name not in _retired and ("generateContent" in actions or not actions):
+            available.append(name)
+    return max(available, key=_rank) if available else None
+
+
+def _resolve(model: str) -> str:
+    return _replacements.get(model, model)
 
 
 def activate(pool: KeyPool, budget: int) -> None:
@@ -70,6 +109,7 @@ def _generate(prompt: str, *, system: str | None, model: str, json_mode: bool, s
     elif json_mode:
         cfg.response_mime_type = "application/json"
 
+    configured, model = model, _resolve(model)
     server_errors = 0
     for _ in range(len(_pool.keys) * 4 + 6):
         if calls_made >= _budget:
@@ -101,6 +141,21 @@ def _generate(prompt: str, *, system: str | None, model: str, json_mode: bool, s
                 else:
                     _pool.cool(key, model, _retry_delay(msg))
                     log.info("Gemini %s per-minute limit, switching key", key.name)
+                continue
+            if code == 404 and re.search(r"model", msg, re.I):
+                calls_made -= 1
+                _retired.add(model)
+                replacement = _find_replacement(model, key)
+                if not replacement:
+                    raise ModelUnavailable(
+                        f"Gemini model {model} is no longer available and no replacement was found; "
+                        f"set GEMINI_MODEL / GEMINI_FAST_MODEL to a current model") from exc
+                _replacements[configured] = replacement
+                note = f"Gemini model {model} was retired by Google; switched to {replacement}. Update GEMINI_MODEL/GEMINI_FAST_MODEL."
+                if note not in notices:
+                    notices.append(note)
+                log.warning(note)
+                model = replacement
                 continue
             if code in (400, 401, 403) and re.search(r"API[_ ]KEY|api key|PERMISSION_DENIED|not valid", msg, re.I):
                 calls_made -= 1

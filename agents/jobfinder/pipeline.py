@@ -62,9 +62,15 @@ def run_user(account: dict, args, store: KeyStateStore, only_job: dict | None) -
         brief = profile_agent.brief(profile)
 
         if not args.skip_scout and not only_job:
-            with run.agent("scout", message="Scout orchestration") as task:
-                stored = scout.run(run, settings, profile, brief, pools, force_all=args.all_sources or args.trigger == "manual")
-                task.message = f"Scanned {run.scanned}, stored {stored} relevant new jobs"
+            try:
+                with run.agent("scout", message="Scout orchestration") as task:
+                    stored = scout.run(run, settings, profile, brief, pools, force_all=args.all_sources or args.trigger == "manual")
+                    task.message = f"Scanned {run.scanned}, stored {stored} relevant new jobs"
+            except (llm.BudgetExceeded, llm.KeysExhausted):
+                raise  # nothing left to process with either
+            except Exception as exc:
+                # Scouting failed, but jobs already in the queue can still be scored/tailored.
+                run.note(f"Scout failed ({exc}); continuing with already queued jobs")
             run.save()
 
         if only_job:
@@ -94,6 +100,8 @@ def run_user(account: dict, args, store: KeyStateStore, only_job: dict | None) -
         run.note(f"Pipeline failed: {exc}")
         log.exception("pipeline failed for user %s", uid)
     finally:
+        for notice in llm.notices:
+            run.note(notice)
         run.note(f"Done. Gemini calls used: {llm.calls_made}/{account.get('llm_calls_per_run')}")
         run.save(status)
     return status == "success"

@@ -122,6 +122,10 @@ def main(argv=None) -> int:
         # The Cloudflare scheduler and GitHub's backup cron can both fire; one scheduled run per slot is enough.
         log.info("A scheduled run already happened in the last 40 minutes – skipping.")
         return 0
+    try:
+        db.prune_seen()
+    except Exception as exc:  # e.g. migration 003 not applied yet
+        log.warning("could not prune seen_postings: %s", exc)
     store = KeyStateStore()
     accounts = db.active_accounts()
     only_job = None

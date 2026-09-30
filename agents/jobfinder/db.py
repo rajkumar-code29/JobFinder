@@ -62,11 +62,63 @@ def existing_keys(user_id: str, source: str, external_ids: list[str]) -> set[str
     return found
 
 
+def all_rows(build, page: int = 1000) -> list[dict]:
+    """Supabase returns at most 1000 rows per request; page through everything.
+    `build` returns a fresh query builder each call."""
+    out, start = [], 0
+    while True:
+        rows = build().range(start, start + page - 1).execute().data
+        out += rows
+        if len(rows) < page:
+            return out
+        start += page
+
+
 def recent_fingerprints(user_id: str, days: int = 45) -> set[str]:
     """company|title fingerprints of recent jobs, for cross-source de-duplication."""
     since = (datetime.now(timezone.utc) - timedelta(days=days)).isoformat()
-    rows = sb.table("jobs").select("company,title").eq("user_id", user_id).gte("created_at", since).limit(5000).execute().data
+    rows = all_rows(lambda: sb.table("jobs").select("company,title").eq("user_id", user_id)
+                    .gte("created_at", since).order("created_at"))
     return {fingerprint(r["company"], r["title"]) for r in rows}
+
+
+# ---------------------------------------------------------------- postings the AI already rated
+SEEN_DAYS = 45
+
+
+def seen_lookup(user_id: str, context: str, keys: list[tuple[str, str, str]]) -> tuple[dict, dict]:
+    """keys = [(source, external_id, fingerprint)]. Returns ({(source, external_id): row}, {fingerprint: row})
+    for postings already rated under the same resume/roles/locations context."""
+    by_key, by_fp = {}, {}
+    since = (datetime.now(timezone.utc) - timedelta(days=SEEN_DAYS)).isoformat()
+    cols = "source,external_id,fingerprint,relevance,reason"
+    by_source: dict[str, list[str]] = {}
+    for source, ext, _ in keys:
+        by_source.setdefault(source, []).append(ext)
+    for source, ids in by_source.items():
+        for i in range(0, len(ids), 100):
+            rows = (sb.table("seen_postings").select(cols).eq("user_id", user_id).eq("context", context)
+                    .eq("source", source).in_("external_id", ids[i:i + 100]).gte("seen_at", since).execute().data)
+            by_key.update({(r["source"], r["external_id"]): r for r in rows})
+    fps = sorted({fp for _, _, fp in keys})
+    for i in range(0, len(fps), 100):
+        rows = (sb.table("seen_postings").select(cols).eq("user_id", user_id).eq("context", context)
+                .in_("fingerprint", fps[i:i + 100]).gte("seen_at", since).execute().data)
+        by_fp.update({r["fingerprint"]: r for r in rows})
+    return by_key, by_fp
+
+
+def record_seen(user_id: str, context: str, rows: list[dict]) -> None:
+    """rows = [{source, external_id, fingerprint, relevance, reason}]"""
+    stamp = now_iso()
+    payload = [{**r, "user_id": user_id, "context": context, "seen_at": stamp} for r in rows]
+    for i in range(0, len(payload), 500):
+        sb.table("seen_postings").upsert(payload[i:i + 500], on_conflict="user_id,source,external_id").execute()
+
+
+def prune_seen() -> None:
+    cutoff = (datetime.now(timezone.utc) - timedelta(days=SEEN_DAYS)).isoformat()
+    sb.table("seen_postings").delete().lt("seen_at", cutoff).execute()
 
 
 def fingerprint(company: str, title: str) -> str:

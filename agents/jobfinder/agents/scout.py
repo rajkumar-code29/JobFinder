@@ -1,6 +1,8 @@
 """Scout agents: fetch postings from every enabled source, keep only resume-relevant ones, store them."""
 from __future__ import annotations
 
+import hashlib
+import json
 import logging
 import secrets
 from datetime import datetime, timezone
@@ -148,16 +150,40 @@ def run(run: db.PipelineRun, settings: dict, profile: dict, profile_brief: str, 
             fps.add(fp)
             fresh.append(j)
 
-    fresh = _hydrate_new(run, fresh)
-    candidates = prefilter(fresh, settings, profile, roles)
-    run.note(f"{len(fresh)} new, {len(candidates)} pass keyword filter")
-    if not candidates:
-        return 0
+    # Skip postings the AI already rated for this resume/roles/locations (kept or rejected).
+    threshold = settings["min_relevance"]
+    context = rating_context(profile, settings, roles)
+    by_key, by_fp = db.seen_lookup(run.user_id, context, [(j.source, j.external_id, db.fingerprint(j.company, j.title)) for j in fresh])
+    unseen, reuse, skipped = [], [], 0
+    for j in fresh:
+        prev = by_key.get((j.source, j.external_id)) or by_fp.get(db.fingerprint(j.company, j.title))
+        if prev is None:
+            unseen.append(j)
+        elif prev["relevance"] >= threshold:
+            reuse.append((j, prev["relevance"], prev["reason"]))  # e.g. threshold lowered since: keep, no AI call
+        else:
+            skipped += 1
 
-    with run.agent("scout", message=f"Rating relevance of {len(candidates)} jobs against resume") as task:
-        rated = rate(candidates, settings, profile_brief, roles)
-        keep = [(j, s, why) for j, s, why in rated if s >= settings["min_relevance"]]
-        task.message = f"{len(keep)} of {len(candidates)} jobs match the resume (≥{settings['min_relevance']})"
+    unseen = _hydrate_new(run, unseen)
+    reused_jobs = {id(j) for j in _hydrate_new(run, [j for j, _, _ in reuse])}
+    reuse = [r for r in reuse if id(r[0]) in reused_jobs]
+    candidates = prefilter(unseen, settings, profile, roles)
+    run.note(f"{len(fresh)} not yet saved: {skipped} already rated earlier (skipped, no AI), "
+             f"{len(unseen)} new, {len(candidates)} of those pass the keyword filter"
+             + (f", {len(reuse)} earlier ratings now above the threshold" if reuse else ""))
+
+    keep = list(reuse)
+    if candidates:
+        with run.agent("scout", message=f"Rating relevance of {len(candidates)} jobs against resume") as task:
+            rated = rate(candidates, settings, profile_brief, roles)
+            db.record_seen(run.user_id, context, [
+                {"source": j.source, "external_id": j.external_id, "fingerprint": db.fingerprint(j.company, j.title),
+                 "relevance": score, "reason": (why or NA)[:500]}
+                for j, score, why in rated])
+            keep += [(j, score, why) for j, score, why in rated if score >= threshold]
+            task.message = f"{len(keep)} of {len(candidates)} jobs match the resume (≥{threshold})"
+    if not keep:
+        return 0
 
     stored = 0
     for job, score, why in sorted(keep, key=lambda x: -x[1]):
@@ -176,6 +202,18 @@ def run(run: db.PipelineRun, settings: dict, profile: dict, profile_brief: str, 
             log.warning("insert failed for %s: %s", job.title, exc)
     run.matched += stored
     return stored
+
+
+def rating_context(profile: dict, settings: dict, roles: list[str]) -> str:
+    """What a relevance rating depends on. If the resume, roles, locations or remote preference change,
+    earlier ratings no longer apply and postings are rated again."""
+    basis = {
+        "resume": profile.get("resume_hash"),
+        "roles": sorted(r.lower().strip() for r in roles),
+        "locations": sorted(str(normalize_location(c)).lower() for c in settings["countries"]),
+        "remote": bool(settings["remote_ok"]),
+    }
+    return hashlib.sha256(json.dumps(basis, sort_keys=True).encode()).hexdigest()[:16]
 
 
 MAX_HYDRATE_PER_RUN = 40

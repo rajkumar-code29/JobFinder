@@ -3,7 +3,7 @@
     "short_name": "JobFinder",
     "start_url": ".",
     "display": "standalone",
-    "background_color": "#FFFFFF",
+    "background_color": "#1F2D78",
     "theme_color": "#3B5BDB",
     "description": "Job-hunting agents",
     "orientation": "portrait-primary",

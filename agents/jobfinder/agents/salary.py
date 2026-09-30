@@ -61,7 +61,7 @@ def run(run: db.PipelineRun, job: dict) -> None:
         found = from_description(job["description"])
         if not found:
             try:
-                data, sources = llm.search_json(PROMPT.format(title=job["title"], company=job["company"], location=job["location"]))
+                data, sources = llm.search_json(PROMPT.format(title=job["title"], company=job["company"], location=job["location"]), agent="salary")
             except llm.StopUser:
                 raise
             except Exception:

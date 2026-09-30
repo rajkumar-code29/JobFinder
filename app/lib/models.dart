@@ -44,6 +44,10 @@ class Job {
   bool get isReady => status == 'ready' || status == 'applied';
   bool get isApplied => status == 'applied';
   String? get batchId => raw['batch_id'] as String?;
+
+  /// Which model produced each agent's output, e.g. {'tailor': 'gemini:gemini-3.8-flash'}.
+  Map<String, String> get models => ((raw['meta'] as Map?)?['models'] as Map? ?? {})
+      .map((k, v) => MapEntry(k.toString(), v.toString()));
   int? get batchRank => raw['batch_rank'] as int?;
 }
 

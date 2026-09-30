@@ -1,24 +1,33 @@
-"""Thin Gemini wrapper: JSON output, Google-Search grounding, per-user key pool with fallback,
-per-key pacing and a per-user call budget. Call `activate()` before processing each user."""
+"""AI layer for all agents: per-agent model routing across providers (Gemini natively, Groq/OpenRouter via
+OpenAI-compatible APIs), per-user key pools with fallback, pacing, a circuit breaker, kill-switch checks,
+a per-user call budget and per-model statistics for the scorecard.
+
+Routing: each agent has an ordered list of model specs (admin → Models → Routing), e.g.
+    tailor: ["gemini:flash", "gemini:flash-lite"]      scout: ["groq:openai/gpt-oss-120b", "gemini:flash-lite"]
+"gemini:flash" / "gemini:flash-lite" expand to every available model of that family, newest first (each has its
+own free daily allowance). Web-search work (salary, search) can only use Gemini (Google Search grounding).
+Call `activate()` before processing each user.
+"""
 from __future__ import annotations
 
 import json
 import logging
 import re
 import time
+from collections import Counter
 from datetime import timedelta
 
 from google import genai
 from google.genai import errors, types
 
-from . import config
+from . import config, providers
 from .keys import ALL_SCOPES, KeyPool, NoKeyAvailable, next_pacific_midnight, utcnow
 
 log = logging.getLogger("jobfinder")
 
 
 class StopUser(RuntimeError):
-    """Stop LLM work for the current user this run; queued jobs continue next run."""
+    """Stop AI work for the current user this run; queued jobs continue next run."""
 
 
 class BudgetExceeded(StopUser):
@@ -34,7 +43,7 @@ class ModelUnavailable(StopUser):
 
 
 class RateLimited(StopUser):
-    """Circuit breaker tripped: Gemini keeps saying 'too many requests'. Stop, don't hammer the account."""
+    """Circuit breaker tripped: a provider keeps saying 'too many requests'. Stop, don't hammer the account."""
 
 
 class Paused(StopUser):
@@ -45,21 +54,115 @@ class SearchUnavailable(RuntimeError):
     """Google-grounded search is being rate-limited: skip search for the rest of the run (other work continues)."""
 
 
-_pool: KeyPool | None = None
+# ---------------------------------------------------------------------------------------------- routing
+AGENTS = ("profile", "scout", "salary", "search", "scorer", "tailor", "coach", "writer")
+SEARCH_AGENTS = ("salary", "search")  # need Google Search grounding → Gemini only
+DEFAULT_ROUTING = {
+    "profile": ["gemini:flash", "gemini:flash-lite"],
+    "scout": ["gemini:flash-lite"],
+    "salary": ["gemini:flash-lite", "gemini:flash"],
+    "search": ["gemini:flash-lite", "gemini:flash"],
+    "scorer": ["gemini:flash-lite"],
+    "tailor": ["gemini:flash", "gemini:flash-lite"],
+    "coach": ["gemini:flash", "gemini:flash-lite"],
+    "writer": ["gemini:flash", "gemini:flash-lite"],
+}
+MAX_OUTPUT_TOKENS = {"coach": 8192, "tailor": 6144, "profile": 4096, "scorer": 3072}
+_routing: dict[str, list[str]] = dict(DEFAULT_ROUTING)
+
+
+def set_routing(routing: dict[str, list[str]] | None) -> None:
+    """Admin-configured routing (missing agents keep the defaults)."""
+    global _routing
+    _routing = {**DEFAULT_ROUTING, **{a: list(c) for a, c in (routing or {}).items() if c}}
+
+
+def routing() -> dict[str, list[str]]:
+    return dict(_routing)
+
+
+# ---------------------------------------------------------------------------------------------- state
+_pools: dict[str, KeyPool] = {}
 _budget = 0
 calls_made = 0
+last_model: str | None = None  # "provider:model" that answered the most recent successful call
 _clients: dict[str, genai.Client] = {}
-_last_call: dict[str, float] = {}
+_next_ok: dict[str, float] = {}   # "<key>:<model>" -> monotonic time of the next allowed call
+_interval: dict[str, float] = {}  # "<key>:<model>" -> seconds between calls; grows on per-minute rejections
 
-# Google retires model versions ("…is no longer available…"). When that happens we ask the API which models
-# exist and switch to the newest one of the same family for the rest of the run.
+# Google retires model versions ("…is no longer available…"): discover what exists and switch.
 _replacements: dict[str, str] = {}
-_retired: set[str] = set()
-notices: list[str] = []  # surfaced in the run log by the pipeline
+_retired: set[str] = set()        # "provider:model"
+notices: list[str] = []           # surfaced in the run log by the pipeline
 _fallbacks_noted: set[tuple[str, str]] = set()
 _MODEL_NAME = re.compile(r"^gemini-(\d+(?:\.\d+)?)-(flash-lite|flash|pro)(?:-(.+))?$")
+_SPECIAL = re.compile(r"tts|image|audio|live|transcribe|robotics|native|embedding|computer", re.I)
+_discovered: dict[str, list[str]] | None = None
+FALLBACK_MODELS = {"flash": ["gemini-3.5-flash"], "flash-lite": ["gemini-3.5-flash-lite"]}
+
+# Circuit breaker. Only per-minute style rejections count: daily-limit / "limit: 0" answers park the key.
+MAX_CONSECUTIVE_REJECTIONS = 4   # in a row without any success
+MAX_REJECTIONS_PER_RUN = 12
+MAX_SEARCH_REJECTIONS = 2        # Google-grounded search gives up sooner; it's optional
+BREAKER_PAUSE = timedelta(hours=1)
+MAX_WAIT_PER_CALL = 90           # seconds one request may spend waiting out per-minute limits
+MAX_WAIT_PER_SEARCH = 30
+OVERLOAD_PAUSE = 300
+_rejections = _consecutive = _search_rejections = 0
+_rejected_keys: dict[str, tuple[KeyPool, object]] = {}
+_search_disabled = False
+_on_event = None
+_should_stop = lambda: False  # noqa: E731 – replaced per run with the kill-switch check
+_overloaded: dict[str, float] = {}  # "provider:model" -> monotonic time until which it goes to the back
+
+# Scorecard: per (agent, "provider:model") counters, flushed by the pipeline after each user.
+_stats: dict[tuple[str, str], Counter] = {}
 
 
+def activate(pools: dict[str, KeyPool] | KeyPool, budget: int, on_event=None, should_stop=None) -> None:
+    """Start a user's turn: their key pools, budget and breaker. Notices are per user, so they reset too."""
+    global _pools, _budget, calls_made, _rejections, _consecutive, _search_rejections, _search_disabled
+    global _on_event, _should_stop, last_model
+    _pools = pools if isinstance(pools, dict) else {"gemini": pools}
+    _should_stop = should_stop or (lambda: False)
+    _budget, calls_made, last_model = budget, 0, None
+    _rejections = _consecutive = _search_rejections = 0
+    _search_disabled = False
+    _rejected_keys.clear()
+    _on_event = on_event
+    notices.clear()
+    _fallbacks_noted.clear()
+
+
+def take_stats() -> list[dict]:
+    """Counters since the last call, for db.record_model_stats()."""
+    rows = [{"agent": a, "model": m, **dict(c)} for (a, m), c in _stats.items()]
+    _stats.clear()
+    return rows
+
+
+def _stat(agent: str, spec: str, **inc) -> None:
+    c = _stats.setdefault((agent, spec), Counter())
+    for k, v in inc.items():
+        c[k] += v
+
+
+def _event(message: str) -> None:
+    log.warning(message)
+    if _on_event:
+        try:
+            _on_event(message)
+        except Exception:
+            pass
+
+
+def _add_notice(note: str) -> None:
+    if note not in notices:
+        notices.append(note)
+        log.warning(note)
+
+
+# ---------------------------------------------------------------------------------------------- Gemini models
 def _family(name: str) -> str | None:
     m = _MODEL_NAME.match(name)
     return m.group(2) if m else None
@@ -72,13 +175,14 @@ def _rank(name: str) -> tuple:
     return (suffix in ("", "latest"), float(m.group(1)), suffix == "")
 
 
-_SPECIAL = re.compile(r"tts|image|audio|live|transcribe|robotics|native|embedding|computer", re.I)
-_discovered: dict[str, list[str]] | None = None
-FALLBACK_MODELS = {"flash": ["gemini-3.5-flash"], "flash-lite": ["gemini-3.5-flash-lite"]}
+def _client(key) -> genai.Client:
+    if key.fingerprint not in _clients:
+        _clients[key.fingerprint] = genai.Client(api_key=key.value)
+    return _clients[key.fingerprint]
 
 
 def _discover(key) -> dict[str, list[str]]:
-    """Text models this key can call, per family, best first. One cheap list call per run."""
+    """Gemini text models this key can call, per family, best first. One cheap list call per run."""
     global _discovered
     if _discovered is None:
         found: dict[str, list[str]] = {"flash": [], "flash-lite": []}
@@ -92,92 +196,131 @@ def _discover(key) -> dict[str, list[str]]:
             log.warning("could not list Gemini models (%s); using defaults", exc)
         for family, names in found.items():
             names.sort(key=_rank, reverse=True)
-            if not any(_rank(n)[0] for n in names):  # no stable model at all: keep previews
-                continue
-            found[family] = [n for n in names if _rank(n)[0]]
+            if any(_rank(n)[0] for n in names):  # prefer stable models when there are any
+                found[family] = [n for n in names if _rank(n)[0]]
         _discovered = found
     return _discovered
 
 
-def _family_models(family: str, preferred: str, key) -> list[str]:
-    names = _discover(key)[family] or FALLBACK_MODELS[family]
+def _gemini_family(family: str, preferred: str) -> list[str]:
+    pool = _pools.get("gemini")
+    names = (_discover(pool.keys[0])[family] if pool else []) or FALLBACK_MODELS[family]
     first = [] if preferred == "auto" else [preferred]
-    if config.GEMINI_USE_ALL_MODELS:
-        rest = names          # each model has its own daily allowance: use them in turn
-    else:
-        rest = [] if first else names[:1]
+    rest = names if config.GEMINI_USE_ALL_MODELS else ([] if first else names[:1])
     return list(dict.fromkeys(first + rest))
 
 
 def _find_replacement(model: str, key) -> str | None:
     family = _family(model) or ("flash-lite" if "lite" in model else "flash")
-    candidates = [n for n in _discover(key)[family] if n not in _retired]
+    candidates = [n for n in _discover(key)[family] if f"gemini:{n}" not in _retired]
     return candidates[0] if candidates else None
 
 
-def build_chain(tier: str, key) -> list[str]:
-    """Models to try, in order, for a kind of work.
-    light    – rating/scoring: flash-lite models (500/day each on the free tier)
-    search   – Google-grounded search: flash-lite, then flash
-    standard – tailoring, interview prep, cover letters: flash models (20/day each), then flash-lite"""
-    lite = _family_models("flash-lite", config.GEMINI_FAST_MODEL, key)
-    flash = _family_models("flash", config.GEMINI_MODEL, key)
-    chain = {"light": lite, "search": lite + flash, "standard": flash + lite}[tier]
+def _expand(spec: str) -> list[tuple[str, str]]:
+    provider, _, model = spec.partition(":")
+    if provider == "gemini" and model in ("flash", "flash-lite"):
+        preferred = config.GEMINI_MODEL if model == "flash" else config.GEMINI_FAST_MODEL
+        return [("gemini", m) for m in _gemini_family(model, preferred)]
+    return [(provider, model)] if model else []
+
+
+def build_chain(agent: str) -> list[tuple[str, str]]:
+    """(provider, model) pairs to try, in order, for an agent. Skips providers without keys, retired models and
+    (for web search) non-Gemini models; overloaded models go to the back for a few minutes."""
+    chain: list[tuple[str, str]] = []
+    for spec in _routing.get(agent) or DEFAULT_ROUTING.get(agent, ["gemini:flash"]):
+        for provider, model in _expand(spec):
+            if agent in SEARCH_AGENTS and provider != "gemini":
+                continue
+            if not _pools.get(provider) or (provider not in ("gemini",) and provider not in providers.OPENAI_COMPATIBLE):
+                continue
+            pair = (provider, _replacements.get(f"{provider}:{model}", model))
+            if f"{pair[0]}:{pair[1]}" not in _retired and pair not in chain:
+                chain.append(pair)
     now = time.monotonic()
-    chain = [m for m in dict.fromkeys(chain) if m not in _retired]
-    # Models Google reported as overloaded go to the back for a few minutes (still tried if nothing else is left).
-    return [m for m in chain if _overloaded.get(m, 0) <= now] + [m for m in chain if _overloaded.get(m, 0) > now]
+    return ([p for p in chain if _overloaded.get(f"{p[0]}:{p[1]}", 0) <= now]
+            + [p for p in chain if _overloaded.get(f"{p[0]}:{p[1]}", 0) > now])
 
 
-def _resolve(model: str) -> str:
-    return _replacements.get(model, model)
+# ---------------------------------------------------------------------------------------------- pacing
+def _base_interval(provider: str, model: str) -> float:
+    if provider == "gemini":
+        if config.GEMINI_MIN_INTERVAL_SEC is not None:
+            return config.GEMINI_MIN_INTERVAL_SEC
+        return {"flash": 12.5, "flash-lite": 4.5}.get(_family(model) or "", 6.0)
+    return providers.OPENAI_COMPATIBLE[provider].get("min_interval") or 3.0
 
 
-# Circuit breaker. Only per-minute style rejections count: daily-limit / "limit: 0" answers park the key and are
-# never retried, so they aren't hammering.
-MAX_CONSECUTIVE_REJECTIONS = 4   # in a row without any success
-MAX_REJECTIONS_PER_RUN = 12
-MAX_SEARCH_REJECTIONS = 2        # Google-grounded search gives up sooner; it's optional
-BREAKER_PAUSE = timedelta(hours=1)
-_rejections = _consecutive = _search_rejections = 0
-_rejected_keys: dict[str, object] = {}
-_search_disabled = False
-_on_event = None
-_should_stop = lambda: False  # noqa: E731 – replaced per run with the kill-switch check
-_overloaded: dict[str, float] = {}  # model -> monotonic time until which it's skipped (503 "high demand")
-OVERLOAD_PAUSE = 300
+def _pace(key, provider: str, model: str) -> None:
+    slot = f"{key.fingerprint}:{model}"
+    wait = _next_ok.get(slot, 0.0) - time.monotonic()
+    if wait > 0:
+        time.sleep(wait)
+    _next_ok[slot] = time.monotonic() + _interval.get(slot, _base_interval(provider, model))
 
 
-def activate(pool: KeyPool, budget: int, on_event=None, should_stop=None) -> None:
-    """Start a user's turn: their key pool, budget and breaker. Notices are per user, so they reset too."""
-    global _pool, _budget, calls_made, _rejections, _consecutive, _search_rejections, _search_disabled, _on_event, _should_stop
-    _should_stop = should_stop or (lambda: False)
-    _pool, _budget, calls_made = pool, budget, 0
-    _rejections = _consecutive = _search_rejections = 0
-    _search_disabled = False
-    _rejected_keys.clear()
-    _on_event = on_event
-    notices.clear()
-    _fallbacks_noted.clear()
+def _after_success(key, provider: str, model: str, tokens: int | None) -> None:
+    """Token-per-minute limited providers (Groq free: 8k/min): wait long enough for the tokens just used."""
+    tpm = providers.OPENAI_COMPATIBLE.get(provider, {}).get("tokens_per_minute")
+    if tpm and tokens:
+        slot = f"{key.fingerprint}:{model}"
+        _next_ok[slot] = max(_next_ok.get(slot, 0.0), time.monotonic() + tokens / tpm * 60)
 
 
-def _event(message: str) -> None:
-    log.warning(message)
-    if _on_event:
-        try:
-            _on_event(message)
-        except Exception:
-            pass
+def _slow_down(key, provider: str, model: str) -> None:
+    """Converge on the real per-minute limit by doubling the gap (max 60s)."""
+    slot = f"{key.fingerprint}:{model}"
+    _interval[slot] = min(60.0, max(_interval.get(slot, _base_interval(provider, model)) * 2, 12.0))
 
 
-def _rejected(key, model: str, reason: str, search: bool) -> None:
-    """Count a per-minute style rejection; trip the breaker when Gemini keeps refusing."""
+def _retry_delay(msg: str) -> float:
+    m = (re.search(r"retry in ([\d.]+)s", msg) or re.search(r"retryDelay['\"]?:\s*['\"]?(\d+)s", msg)
+         or re.search(r"try again in ([\d.]+)s", msg))
+    return float(m.group(1)) + 2 if m else 30.0
+
+
+def _reason(provider: str, code, msg: str) -> str:
+    """Short, human-readable version of the provider's error for the run log."""
+    quota = re.search(r"quotaId['\"]?:\s*['\"]?([\w-]+)", msg) or re.search(r"metric:\s*[\w.-]*/([\w-]+)", msg)
+    limit = re.search(r"limit:\s*(\d+)", msg, re.I)
+    if provider == "gemini" and (quota or limit):
+        return f"HTTP {code}: {quota.group(1) if quota else 'quota'}" + (f", limit {limit.group(1)}" if limit else "")
+    text = re.search(r"'message':\s*'([^']+)", msg)
+    return f"HTTP {code}: {(text.group(1) if text else msg)[:160]}"
+
+
+def _classify(provider: str, code, msg: str, retry_after: float | None):
+    """→ (kind, detail): minute (seconds), day (until), limit0, overloaded, too_large, model_gone, invalid_key, other"""
+    low = msg.lower()
+    if code == 429:
+        if re.search(r"limit:\s*0\b", msg):
+            return "limit0", None
+        if provider == "gemini":
+            if "PerDay" in msg or "per day" in low:
+                return "day", next_pacific_midnight()
+            return "minute", _retry_delay(msg)
+        if re.search(r"per day|\(rpd\)|\(tpd\)|per-day|free-models-per-day", low):
+            return "day", utcnow() + timedelta(seconds=max(retry_after or 3600, 600))
+        return "minute", (retry_after + 1 if retry_after else _retry_delay(msg))
+    if code == 413 or (code == 400 and re.search(r"too large|context length|maximum context|reduce the length", low)):
+        return "too_large", None
+    if code == 404 and "model" in low:
+        return "model_gone", None
+    if code in (401, 403) or (code == 400 and re.search(r"api[_ ]key|not valid|invalid.{0,20}key", low)):
+        return "invalid_key", None
+    if code and int(code) >= 500:
+        return "overloaded", None
+    return "other", None
+
+
+def _rejected(pool: KeyPool, key, provider: str, model: str, reason: str, search: bool) -> None:
+    """Count a per-minute style rejection; trip the breaker when a provider keeps refusing."""
     global _rejections, _consecutive, _search_rejections, _search_disabled
     _rejections += 1
     _consecutive += 1
-    _rejected_keys[key.fingerprint] = key
+    _rejected_keys[key.fingerprint] = (pool, key)
     if _rejections <= 6:
-        _event(f"Gemini rejected a request ({model}, {reason})")
+        _event(f"{providers.label(provider)} rejected a request ({model}, {reason})")
     if search:
         _search_rejections += 1
         if _search_rejections >= MAX_SEARCH_REJECTIONS:
@@ -186,162 +329,148 @@ def _rejected(key, model: str, reason: str, search: bool) -> None:
             raise SearchUnavailable("Google search rate-limited")
     if _consecutive >= MAX_CONSECUTIVE_REJECTIONS or _rejections >= MAX_REJECTIONS_PER_RUN:
         until = utcnow() + BREAKER_PAUSE
-        for k in _rejected_keys.values():
-            _pool.park(k, ALL_SCOPES, until, f"paused by circuit breaker after repeated 429s ({reason})")
+        for p, k in _rejected_keys.values():
+            p.park(k, ALL_SCOPES, until, f"paused by circuit breaker after repeated 429s ({reason})")
         raise RateLimited(
-            f"Gemini rejected {_rejections} requests ({reason}). Stopped Gemini work for this run to protect the "
-            f"account; the rejected keys are paused until {until:%H:%M} UTC.")
+            f"AI providers rejected {_rejections} requests ({reason}). Stopped AI work for this run to protect "
+            f"the accounts; the rejected keys are paused until {until:%H:%M} UTC.")
 
 
-def _client(key) -> genai.Client:
-    if key.fingerprint not in _clients:
-        _clients[key.fingerprint] = genai.Client(api_key=key.value)
-    return _clients[key.fingerprint]
+# ---------------------------------------------------------------------------------------------- calls
+def _call(provider: str, key, model: str, prompt: str, system: str | None, json_mode: bool, search: bool,
+          temperature: float, max_tokens: int):
+    """One request. Returns (text, grounding sources, tokens)."""
+    if provider == "gemini":
+        cfg = types.GenerateContentConfig(system_instruction=system, temperature=temperature,
+                                          max_output_tokens=max_tokens)
+        if search:  # grounding and JSON mime type can't be combined; JSON is parsed out of the text instead
+            cfg.tools = [types.Tool(google_search=types.GoogleSearch())]
+        elif json_mode:
+            cfg.response_mime_type = "application/json"
+        resp = _client(key).models.generate_content(model=model, contents=prompt, config=cfg)
+        sources = []
+        try:
+            meta = resp.candidates[0].grounding_metadata
+            for chunk in (meta.grounding_chunks or []) if meta else []:
+                if chunk.web:
+                    sources.append({"title": chunk.web.title, "uri": chunk.web.uri})
+        except (AttributeError, IndexError, TypeError):
+            pass
+        usage = getattr(resp, "usage_metadata", None)
+        return resp.text, sources, getattr(usage, "total_token_count", None)
+    text, tokens = providers.chat(provider, key.value, model, system, prompt, json_mode=json_mode,
+                                  temperature=temperature, max_tokens=max_tokens)
+    return text, [], tokens
 
 
-MAX_WAIT_PER_CALL = 90   # seconds one request may spend waiting out per-minute limits before giving up
-MAX_WAIT_PER_SEARCH = 30
-_interval: dict[str, float] = {}  # "<key>:<model>" -> seconds between calls; grows when Gemini says "too many"
-
-
-def _slot(key, model: str) -> str:
-    return f"{key.fingerprint}:{model}"
-
-
-def _base_interval(model: str) -> float:
-    """Start at the free-tier pace for the family (flash 5/min, flash-lite 15/min) unless configured."""
-    if config.GEMINI_MIN_INTERVAL_SEC is not None:
-        return config.GEMINI_MIN_INTERVAL_SEC
-    return {"flash": 12.5, "flash-lite": 4.5}.get(_family(model) or "", 6.0)
-
-
-def _pace(key, model: str) -> None:
-    slot = _slot(key, model)
-    wait = _interval.get(slot, _base_interval(model)) - (time.monotonic() - _last_call.get(slot, 0.0))
-    if wait > 0:
-        time.sleep(wait)
-    _last_call[slot] = time.monotonic()
-
-
-def _slow_down(key, model: str) -> None:
-    """Free-tier per-minute limits differ per model; converge on the real one by doubling the gap (max 60s)."""
-    slot = _slot(key, model)
-    _interval[slot] = min(60.0, max(_interval.get(slot, _base_interval(model)) * 2, 12.0))
-
-
-def _retry_delay(msg: str) -> float:
-    m = re.search(r"retry in ([\d.]+)s", msg) or re.search(r"retryDelay['\"]?:\s*['\"]?(\d+)s", msg)
-    return float(m.group(1)) + 2 if m else 30.0
-
-
-def _reason(code, msg: str) -> str:
-    """Short, human-readable version of Google's error for the run log."""
-    quota = re.search(r"quotaId['\"]?:\s*['\"]?([\w-]+)", msg) or re.search(r"metric:\s*[\w.-]*/([\w-]+)", msg)
-    limit = re.search(r"limit:\s*(\d+)", msg)
-    if quota or limit:
-        return f"HTTP {code}: {quota.group(1) if quota else 'quota'}" + (f", limit {limit.group(1)}" if limit else "")
-    text = re.search(r"'message':\s*'([^']+)", msg)
-    return f"HTTP {code}: {(text.group(1) if text else msg)[:160]}"
-
-
-def _add_notice(note: str) -> None:
-    if note not in notices:
-        notices.append(note)
-        log.warning(note)
-
-
-def _generate(prompt: str, *, system: str | None, tier: str, json_mode: bool, search: bool, temperature: float):
-    """Try each model of the tier's chain in order, across all keys."""
-    global calls_made
-    if _pool is None:
+def _generate(prompt: str, *, agent: str, system: str | None, json_mode: bool, search: bool, temperature: float):
+    global calls_made, _consecutive, last_model
+    if not _pools:
         raise RuntimeError("llm.activate() was not called")
-    if not _pool:
-        raise KeysExhausted("No Gemini API key: add one in Settings → API keys")
-    cfg = types.GenerateContentConfig(system_instruction=system, temperature=temperature)
-    if search:
-        # Grounding and JSON mime type can't be combined; we parse JSON out of the text instead.
-        cfg.tools = [types.Tool(google_search=types.GoogleSearch())]
-    elif json_mode:
-        cfg.response_mime_type = "application/json"
-
-    global _consecutive
     if search and _search_disabled:
         raise SearchUnavailable("Google search skipped for the rest of this run (rate-limited)")
-    chain = build_chain(tier, _pool.keys[0])
+    chain = build_chain(agent)
+    if not chain:
+        raise KeysExhausted(f"No usable model for the {agent} agent: add an API key for its providers "
+                            f"(Settings → API keys) or change its routing")
     deadline = time.monotonic() + (MAX_WAIT_PER_SEARCH if search else MAX_WAIT_PER_CALL)
+    est_tokens = (len(prompt) + len(system or "")) // 4
+    out_tokens = MAX_OUTPUT_TOKENS.get(agent, 2048)
     last_error, server_errors = "no response", 0
-    for position, configured in enumerate(chain):
-        model = _resolve(configured)
+
+    for position, (provider, model) in enumerate(chain):
+        spec = f"{provider}:{model}"
+        pool = _pools[provider]
+        limit = providers.OPENAI_COMPATIBLE.get(provider, {}).get("max_request_tokens")
+        max_tokens = out_tokens
+        if limit:
+            if est_tokens + 512 > limit:  # the free tier would refuse it anyway: don't spend a request
+                _stat(agent, spec, too_large=1)
+                last_error = f"{providers.label(provider)}: request of ~{est_tokens} tokens exceeds its {limit}-token limit"
+                continue
+            max_tokens = min(out_tokens, limit - est_tokens)
         for _ in range(200):  # safety net; the deadline normally ends the loop
             if _should_stop():
                 raise Paused("Agents paused by an admin")
             if calls_made >= _budget:
-                raise BudgetExceeded(f"Gemini call budget of {_budget} used for this run")
+                raise BudgetExceeded(f"AI call budget of {_budget} used for this run")
             try:
-                key = _pool.get(model)
+                key = pool.get(model)
             except NoKeyAvailable:
-                wait = _pool.seconds_until_free(model)
+                wait = pool.seconds_until_free(model)
                 if wait is not None and time.monotonic() + wait < deadline:
-                    log.info("Gemini keys cooling down for %s, waiting %.0fs", model, wait)
+                    log.info("%s keys cooling down for %s, waiting %.0fs", providers.label(provider), model, wait)
                     time.sleep(wait + 1)
                     continue
-                break  # every key is used up (or out of time) for this model: try the next model in the chain
+                break  # every key used up (or out of time) for this model: next model in the chain
 
-            _pace(key, model)
+            _pace(key, provider, model)
             calls_made += 1
+            started = time.monotonic()
             try:
-                resp = _client(key).models.generate_content(model=model, contents=prompt, config=cfg)
-                _pool.used(key)
-                _consecutive = 0
-                return resp
-            except errors.APIError as exc:
-                code, msg = getattr(exc, "code", None), str(exc)
-                if code == 429:
-                    calls_made -= 1  # rejected calls don't count against the budget
-                    last_error = _reason(code, msg)
-                    if re.search(r"limit:\s*0\b", msg):
-                        _pool.park(key, model, utcnow() + timedelta(hours=24), f"{model} is not available on this key's free tier")
-                    elif "PerDay" in msg or "per day" in msg.lower():
-                        _pool.park(key, model, next_pacific_midnight(), "daily free-tier quota reached")
-                    else:
-                        _pool.cool(key, model, _retry_delay(msg))
-                        _slow_down(key, model)
-                        _rejected(key, model, last_error, search)  # may stop the run (breaker)
+                text, sources, tokens = _call(provider, key, model, prompt, system, json_mode, search, temperature, max_tokens)
+            except (errors.APIError, providers.ProviderError) as exc:
+                code = getattr(exc, "code", None)
+                msg = exc.message if isinstance(exc, providers.ProviderError) else str(exc)
+                kind, detail = _classify(provider, code, msg, getattr(exc, "retry_after", None))
+                calls_made -= 1  # rejected calls don't count against the budget
+                last_error = _reason(provider, code, msg)
+                if kind == "minute":
+                    _stat(agent, spec, rate_limited=1)
+                    pool.cool(key, model, detail)
+                    _slow_down(key, provider, model)
+                    _rejected(pool, key, provider, model, last_error, search)  # may stop the run (breaker)
                     continue
-                if code == 404 and re.search(r"model", msg, re.I):
-                    calls_made -= 1
-                    last_error = _reason(code, msg)
-                    _retired.add(model)
-                    replacement = _find_replacement(model, key)
+                if kind in ("day", "limit0"):
+                    _stat(agent, spec, rate_limited=1)
+                    until = detail if kind == "day" else utcnow() + timedelta(hours=24)
+                    pool.park(key, model, until, "daily free-tier limit reached" if kind == "day"
+                              else f"{model} is not available on this key's free tier")
+                    continue
+                if kind == "too_large":
+                    _stat(agent, spec, too_large=1)
+                    break  # this model can't take a request this big: next model
+                if kind == "model_gone":
+                    _stat(agent, spec, errors=1)
+                    _retired.add(spec)
+                    replacement = _find_replacement(model, key) if provider == "gemini" else None
                     if not replacement:
+                        _add_notice(f"{providers.label(provider)} model {model} is not available; skipping it")
                         break
-                    _replacements[configured] = replacement
-                    _add_notice(f"Gemini model {model} was retired by Google; switched to {replacement}. "
-                                f"Update GEMINI_MODEL/GEMINI_FAST_MODEL.")
-                    model = replacement
+                    _replacements[spec] = replacement
+                    _add_notice(f"Gemini model {model} was retired by Google; switched to {replacement}.")
+                    model, spec = replacement, f"gemini:{replacement}"
                     continue
-                if code in (400, 401, 403) and re.search(r"API[_ ]KEY|api key|PERMISSION_DENIED|not valid", msg, re.I):
-                    calls_made -= 1
-                    last_error = _reason(code, msg)
-                    _pool.park(key, ALL_SCOPES, utcnow() + timedelta(hours=24), f"rejected by Gemini (HTTP {code}): invalid or unauthorized key")
+                if kind == "invalid_key":
+                    _stat(agent, spec, errors=1)
+                    pool.park(key, ALL_SCOPES, utcnow() + timedelta(hours=24),
+                              f"rejected by {providers.label(provider)} (HTTP {code}): invalid or unauthorized key")
                     continue
-                if code in (500, 502, 503, 504):
-                    # "This model is currently experiencing high demand": not our quota, not the key. Move on to the
-                    # next model in the chain instead of failing the job; come back to this one in a few minutes.
-                    calls_made -= 1
+                if kind == "overloaded":
+                    _stat(agent, spec, overloaded=1)
                     server_errors += 1
-                    last_error = _reason(code, msg)
-                    _overloaded[model] = time.monotonic() + OVERLOAD_PAUSE
+                    _overloaded[spec] = time.monotonic() + OVERLOAD_PAUSE
                     if server_errors <= 3:
-                        _event(f"Gemini {model} overloaded ({last_error}); trying the next model")
+                        _event(f"{providers.label(provider)} {model} overloaded ({last_error}); trying the next model")
                     break
+                _stat(agent, spec, errors=1)
                 raise
-        if position + 1 < len(chain) and (model, chain[position + 1]) not in _fallbacks_noted:
-            _fallbacks_noted.add((model, chain[position + 1]))
-            _add_notice(f"Gemini {model} unavailable for now ({last_error}); using {_resolve(chain[position + 1])} "
-                        f"for the rest of this run.")
-    raise KeysExhausted(f"Gemini limits reached on every key and model ({last_error}). "
-                        f"Per-minute limits clear within a minute, daily limits at midnight Pacific.")
+            except Exception:  # network errors etc.
+                _stat(agent, spec, errors=1)
+                raise
+            pool.used(key)
+            _after_success(key, provider, model, tokens)
+            _consecutive = 0
+            last_model = spec
+            _stat(agent, spec, ok=1, ms=int((time.monotonic() - started) * 1000))
+            return text, sources, spec
+        if position + 1 < len(chain):
+            nxt = f"{chain[position + 1][0]}:{chain[position + 1][1]}"
+            if (spec, nxt) not in _fallbacks_noted:
+                _fallbacks_noted.add((spec, nxt))
+                _add_notice(f"{agent}: {spec} unavailable for now ({last_error}); using {nxt}")
+    raise KeysExhausted(f"AI limits reached for the {agent} agent on every key and model ({last_error}). "
+                        f"Per-minute limits clear within a minute, daily limits within a day.")
 
 
 def _parse_json(text: str):
@@ -363,29 +492,29 @@ def _parse_json(text: str):
     raise ValueError(f"Model did not return JSON: {text[:300]}")
 
 
-def ask_json(prompt: str, *, system: str | None = None, fast: bool = False, temperature: float = 0.3):
-    """fast=True for high-volume work (rating, scoring) on flash-lite; otherwise flash with flash-lite fallback.
-    Malformed JSON gets one retry with a stricter instruction before failing."""
-    tier = "light" if fast else "standard"
-    resp = _generate(prompt, system=system, tier=tier, json_mode=True, search=False, temperature=temperature)
+def ask_json(prompt: str, *, agent: str, system: str | None = None, temperature: float = 0.3):
+    """JSON answer from the agent's routed models. Malformed JSON gets one retry with a stricter instruction."""
+    text, _, spec = _generate(prompt, agent=agent, system=system, json_mode=True, search=False, temperature=temperature)
     try:
-        return _parse_json(resp.text)
+        return _parse_json(text)
     except ValueError as exc:  # json.JSONDecodeError is a ValueError
-        _event(f"Model returned invalid JSON ({exc}); retrying once")
-        resp = _generate(prompt + "\n\nReturn ONLY valid JSON: double-quoted keys and strings, no comments, "
-                         "no trailing commas.", system=system, tier=tier, json_mode=True, search=False, temperature=0)
-        return _parse_json(resp.text)
+        _stat(agent, spec, invalid_json=1)
+        _event(f"{spec} returned invalid JSON ({exc}); retrying once")
+        text, _, spec = _generate(prompt + "\n\nReturn ONLY valid JSON: double-quoted keys and strings, no comments, "
+                                  "no trailing commas.", agent=agent, system=system, json_mode=True, search=False,
+                                  temperature=0)
+        try:
+            return _parse_json(text)
+        except ValueError:
+            _stat(agent, spec, invalid_json=1)
+            raise
 
 
-def search_json(prompt: str, *, system: str | None = None) -> tuple[object, list[dict]]:
-    """Grounded with Google Search. Returns (parsed_json, sources[{title, uri}])."""
-    resp = _generate(prompt, system=system, tier="search", json_mode=False, search=True, temperature=0.2)
-    sources = []
+def search_json(prompt: str, *, agent: str = "search", system: str | None = None) -> tuple[object, list[dict]]:
+    """Grounded with Google Search (Gemini). Returns (parsed_json, sources[{title, uri}])."""
+    text, sources, spec = _generate(prompt, agent=agent, system=system, json_mode=False, search=True, temperature=0.2)
     try:
-        meta = resp.candidates[0].grounding_metadata
-        for chunk in (meta.grounding_chunks or []) if meta else []:
-            if chunk.web:
-                sources.append({"title": chunk.web.title, "uri": chunk.web.uri})
-    except (AttributeError, IndexError):
-        pass
-    return _parse_json(resp.text), sources
+        return _parse_json(text), sources
+    except ValueError:
+        _stat(agent, spec, invalid_json=1)
+        raise

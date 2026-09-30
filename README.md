@@ -190,6 +190,19 @@ select vault.create_secret('github_pat_…', 'gh_dispatch_token', 'Starts the Jo
   Everyone sees a "paused" banner.
 - The database enforces admin access (`public.is_admin()`), not just the UI.
 
+## AI models per agent (admin → Agents → ⎈ AI models)
+Run [`006_models.sql`](supabase/migrations/006_models.sql) first.
+- **Routing:** an ordered model list per agent (Scout, Salary, Job search, Scorer, Tailor, Coach, Writer, Profile).
+  `gemini:flash` / `gemini:flash-lite` = every available model of that family, newest first. Other providers:
+  `groq:<model>` (free: ~1k requests/day per model, but prompts must stay under ~7.5k tokens, so it suits Scout and
+  Writer), `openrouter:<model>:free` (50/day). Salary and job search need web search, so Gemini only. Providers
+  without a key are skipped. Add keys in Settings → API keys (or Shared keys), or as GitHub secrets
+  `GROQ_API_KEY` / `OPENROUTER_API_KEY`.
+- **Scorecard:** per agent and model: successes, speed, limits hit, overloads, bad JSON, prompts too big, 👍/👎
+  (users rate each job's tailored resume, interview prep and cover letter on the job page).
+- **Compare:** runs the same jobs from your latest batch through 2–4 models for one agent without changing them.
+  Automatic metrics (e.g. ATS gain judged by the production scorer) plus a blind "pick the best" review.
+
 ## Gemini safety stop
 Per-minute rejections (429) are counted per user per run: 4 in a row or 12 in total stop all Gemini work for that run
 and pause the rejected keys for 1 hour. Google-grounded search gives up after 2 and is skipped for the rest of the run.
@@ -210,7 +223,7 @@ cd app && flutter run -d chrome --dart-define-from-file=env.json
 ```
 
 ## Free-tier budget notes
-- Work is routed by model. **flash-lite** (free tier ~15/min, 500/day per model) does relevance rating, ATS scoring,
+- By default work is routed by model (change it per agent under AI models). **flash-lite** (free tier ~15/min, 500/day per model) does relevance rating, ATS scoring,
   salary lookups and Google job search. **flash** (~5/min, 20/day per model) does tailoring, interview prep and cover
   letters, about 3–4 calls per job.
 - `GEMINI_MODEL` / `GEMINI_FAST_MODEL` default to `auto` (newest stable model of each family). Every model version has

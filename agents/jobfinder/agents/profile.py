@@ -65,7 +65,7 @@ def run(run: db.PipelineRun) -> dict | None:
 
         resume_text = docs.any_text(primary, resume_bytes)
         cover_text = docs.any_text(files["cover_letter"], cover_bytes) if cover_bytes else "NA"
-        data = llm.ask_json(PROMPT.format(resume=resume_text[:30000], cover=cover_text[:12000]), system=SYSTEM)
+        data = llm.ask_json(PROMPT.format(resume=resume_text[:30000], cover=cover_text[:12000]), agent="profile", system=SYSTEM)
         values = {
             "resume_filename": primary.rsplit("/", 1)[1],
             "resume_hash": r_hash, "cover_letter_hash": c_hash,

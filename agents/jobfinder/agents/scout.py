@@ -100,7 +100,7 @@ def rate(jobs: list[RawJob], settings: dict, profile_brief: str, roles: list[str
             res = llm.ask_json(RELEVANCE_PROMPT.format(
                 profile=profile_brief[:6000], roles=", ".join(roles),
                 countries=", ".join(country_name(normalize_location(c)) for c in settings["countries"]),
-                remote=settings["remote_ok"], jobs=listing), fast=True, temperature=0)
+                remote=settings["remote_ok"], jobs=listing), agent="scout", temperature=0)
         except llm.StopUser:
             raise
         except Exception as exc:  # one bad batch shouldn't lose the rest; these jobs get re-rated next run

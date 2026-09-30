@@ -13,6 +13,7 @@ import 'screens/interview.dart';
 import 'screens/job_detail.dart';
 import 'screens/jobs.dart';
 import 'screens/login.dart';
+import 'screens/models.dart';
 import 'screens/set_password.dart';
 import 'screens/settings.dart';
 import 'widgets/shell.dart';
@@ -92,6 +93,16 @@ class JobFinderApp extends StatelessWidget {
             ],
           ),
           GoRoute(path: '/agents', builder: (_, _) => const AgentsScreen()),
+          GoRoute(
+            path: '/models',
+            builder: (_, _) => const ModelsScreen(),
+            routes: [
+              GoRoute(
+                path: 'compare/:id',
+                builder: (_, state) => ComparisonScreen(id: int.parse(state.pathParameters['id']!)),
+              ),
+            ],
+          ),
           GoRoute(path: '/settings', builder: (_, _) => const SettingsScreen()),
         ],
       ),

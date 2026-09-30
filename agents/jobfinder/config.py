@@ -30,6 +30,8 @@ SHARED_ADZUNA_KEYS = [tuple(p.split(":", 1)) for p in _split(env("ADZUNA_KEYS"))
 if env("ADZUNA_APP_ID") and env("ADZUNA_APP_KEY"):
     SHARED_ADZUNA_KEYS.append((env("ADZUNA_APP_ID"), env("ADZUNA_APP_KEY")))
 SHARED_RAPIDAPI_KEYS = _split(env("RAPIDAPI_KEYS")) + _split(env("RAPIDAPI_KEY"))
+SHARED_GROQ_KEYS = _split(env("GROQ_API_KEYS")) + _split(env("GROQ_API_KEY"))
+SHARED_OPENROUTER_KEYS = _split(env("OPENROUTER_API_KEYS")) + _split(env("OPENROUTER_API_KEY"))
 
 # Model routing (see llm.py): quality work (tailoring, interview prep, cover letters) uses a "flash" model,
 # high-volume work (relevance rating, ATS scoring, salary/job search) uses a "flash-lite" model.

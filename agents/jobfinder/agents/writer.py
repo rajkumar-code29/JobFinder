@@ -35,7 +35,8 @@ def run(run: db.PipelineRun, job: dict, profile: dict, profile_brief: str) -> No
             title=job["title"], company=job["company"], location=job["location"], jd=job["description"][:8000],
             profile=profile_brief[:8000], parent=(profile.get("cover_letter_text") or "NA")[:8000],
             added=", ".join(a.get("skill", "") for a in job.get("added_skills") or []) or "none",
-            today=date.today().strftime("%d %B %Y")), system=SYSTEM, temperature=0.7)
+            today=date.today().strftime("%d %B %Y")), agent="writer", system=SYSTEM, temperature=0.7)
+        model = llm.last_model
         s = profile.get("structured") or {}
         header = {"name": s.get("name"), "email": s.get("email"), "phone": s.get("phone"),
                   "location": s.get("location"), "link": (s.get("links") or [None])[0]}
@@ -48,6 +49,7 @@ def run(run: db.PipelineRun, job: dict, profile: dict, profile_brief: str) -> No
             pdf = None
         if pdf:
             files["cover_letter_pdf"] = db.upload(f"{prefix}/Cover Letter.pdf", pdf, docs.PDF_MIME)
-        db.update_job(job["job_id"], {"files": files})
-        job["files"] = files
+        meta = db.model_meta(job, "writer", model)
+        db.update_job(job["job_id"], {"files": files, "meta": meta})
+        job.update(files=files, meta=meta)
         task.message = f"Cover letter written ({sum(len(p.split()) for p in letter.get('paragraphs', []))} words)"

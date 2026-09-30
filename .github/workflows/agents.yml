@@ -15,6 +15,9 @@ on:
       job:
         description: "Reprocess one job id (optional, e.g. JF-20260927-ABCDE)"
         required: false
+      compare:
+        description: "Model comparison id (started from the app: Models → Compare)"
+        required: false
       all_sources:
         description: "Ignore per-source throttles"
         type: boolean
@@ -53,10 +56,13 @@ jobs:
           ADZUNA_KEYS: ${{ secrets.ADZUNA_KEYS }}
           RAPIDAPI_KEY: ${{ secrets.RAPIDAPI_KEY }}
           RAPIDAPI_KEYS: ${{ secrets.RAPIDAPI_KEYS }}
+          GROQ_API_KEY: ${{ secrets.GROQ_API_KEY }}
+          OPENROUTER_API_KEY: ${{ secrets.OPENROUTER_API_KEY }}
           GEMINI_MODEL: ${{ vars.GEMINI_MODEL }}
           GEMINI_FAST_MODEL: ${{ vars.GEMINI_FAST_MODEL }}
         run: |
           ARGS="--trigger ${{ inputs.trigger || (github.event_name == 'workflow_dispatch' && 'manual' || 'schedule') }}"
           if [ -n "${{ inputs.job }}" ]; then ARGS="$ARGS --job ${{ inputs.job }}"; fi
+          if [ -n "${{ inputs.compare }}" ]; then ARGS="$ARGS --compare ${{ inputs.compare }}"; fi
           if [ "${{ inputs.all_sources }}" = "true" ]; then ARGS="$ARGS --all-sources"; fi
           python -m jobfinder.pipeline $ARGS

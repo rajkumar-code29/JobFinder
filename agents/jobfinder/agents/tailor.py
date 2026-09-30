@@ -47,7 +47,8 @@ def _pass(doc_bytes: bytes, job: dict, rep: dict, target: int) -> tuple[bytes, d
         target=target, current=rep.get("ats_score"), title=job["title"], company=job["company"],
         jd=job["description"][:10000],
         suggestions=json.dumps({k: rep.get(k) for k in ("keyword_match", "gaps", "suggestions")}, ensure_ascii=False),
-        paragraphs=listing[:25000]), system=SYSTEM, temperature=0.4)
+        paragraphs=listing[:25000]), agent="tailor", system=SYSTEM, temperature=0.4)
+    plan["_model"] = llm.last_model
     return docs.apply_edits(doc_bytes, plan.get("edits", []), plan.get("inserts", [])), plan
 
 
@@ -57,10 +58,11 @@ def run(run: db.PipelineRun, job: dict, profile: dict, report: dict, target: int
             raise RuntimeError("Tailoring needs a .docx parent resume – upload one in Settings")
         parent = db.download(profile["resume_docx"], db.PARENT_BUCKET)
 
-        current, rep, added, changes = parent, report, [], []
+        current, rep, added, changes, model = parent, report, [], [], None
         passes = 0
         for passes in range(1, MAX_PASSES + 1):
             current, plan = _pass(current, job, rep, target)
+            model = plan.pop("_model", None) or model
             added += [a for a in plan.get("added_skills", []) if isinstance(a, dict)]
             changes += plan.get("changes_summary", [])
             rep = scorer.score(job, docs.docx_text(current))
@@ -98,7 +100,7 @@ def run(run: db.PipelineRun, job: dict, profile: dict, report: dict, target: int
         files["tailored_report"] = f"{prefix}/tailored_report.json"
 
         values = {"tailored_ats_score": int(rep.get("ats_score") or 0), "added_skills": unique_added,
-                  "files": files, "status": "tailored"}
+                  "files": files, "status": "tailored", "meta": db.model_meta(job, "tailor", model)}
         db.update_job(job["job_id"], values)
         job.update(values)
         task.message = (f"Tailored in {passes} pass(es): ATS {job['ats_score']}% → {values['tailored_ats_score']}%"

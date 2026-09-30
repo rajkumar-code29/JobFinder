@@ -458,6 +458,8 @@ class _ParentDocsState extends State<_ParentDocs> {
 
 const providerInfo = {
   'gemini': ('Gemini', 'aistudio.google.com/apikey', Icons.auto_awesome),
+  'groq': ('Groq', 'console.groq.com/keys (free tier)', Icons.bolt),
+  'openrouter': ('OpenRouter', 'openrouter.ai/keys (free models: 50/day)', Icons.alt_route),
   'adzuna': ('Adzuna', 'developer.adzuna.com', Icons.travel_explore),
   'rapidapi': ('RapidAPI · JSearch', 'rapidapi.com (JSearch free plan)', Icons.hub_outlined),
 };

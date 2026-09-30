@@ -36,7 +36,7 @@ skill not evidenced in the resume but closely related to skills it does show."""
 def score(job: dict, resume_text: str) -> dict:
     return llm.ask_json(PROMPT.format(title=job["title"], company=job["company"], location=job["location"],
                                       jd=job["description"][:14000], resume=resume_text[:20000]), system=SYSTEM, temperature=0,
-                        fast=True)  # flash-lite: high volume (parent + every re-score), and scores stay comparable
+                        agent="scorer")  # one routed model for parent + every re-score keeps scores comparable
 
 
 def report_markdown(job: dict, rep: dict, tailored: dict | None = None) -> str:
@@ -85,7 +85,7 @@ def run(run: db.PipelineRun, job: dict, profile: dict) -> dict:
         files = {**(job.get("files") or {}), "job": f"{prefix}/job.json", "report_json": f"{prefix}/report.json",
                  "report_md": f"{prefix}/Suggestions Report.md"}
         values = {"ats_score": int(rep.get("ats_score") or 0), "shortlist_probability": int(rep.get("shortlist_probability") or 0),
-                  "files": files, "status": "scored"}
+                  "files": files, "status": "scored", "meta": db.model_meta(job, "scorer", llm.last_model)}
         db.update_job(job["job_id"], values)
         job.update(values)
         task.message = f"ATS {values['ats_score']}%, shortlist {values['shortlist_probability']}%"

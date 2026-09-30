@@ -80,6 +80,54 @@ class Api {
       .stream(primaryKey: ['id'])
       .map((rows) => rows.isEmpty ? null : AgentControl(rows.first));
 
+  // ---------------------------------------------------------------- models (admin): routing, scorecard, comparisons
+  static Future<Map<String, List<String>>> modelRouting() async {
+    final rows = await supa.from('model_routing').select('agent,chain');
+    return {for (final r in rows) r['agent'] as String: List<String>.from(r['chain'] as List)};
+  }
+
+  static Future<void> saveRouting(String agent, List<String> chain) => supa.from('model_routing').upsert({
+        'agent': agent,
+        'chain': chain,
+        'updated_by': supa.auth.currentUser?.email,
+        'updated_at': DateTime.now().toUtc().toIso8601String(),
+      });
+
+  static Future<void> resetRouting(String agent) => supa.from('model_routing').delete().eq('agent', agent);
+
+  static Future<List<Map<String, dynamic>>> scorecard({int days = 14}) async =>
+      List<Map<String, dynamic>>.from(await supa.rpc('model_scorecard', params: {'p_days': days}) as List);
+
+  static Stream<List<Map<String, dynamic>>> comparisonsStream() =>
+      supa.from('model_comparisons').stream(primaryKey: ['id']).order('id').limit(30);
+
+  static Future<int> requestComparison(String agent, List<String> models, int jobs) async =>
+      (await supa.rpc('request_model_comparison', params: {'p_agent': agent, 'p_models': models, 'p_jobs': jobs}) as num)
+          .toInt();
+
+  static Stream<List<Map<String, dynamic>>> comparisonResultsStream(int id) =>
+      supa.from('comparison_results').stream(primaryKey: ['id']).eq('comparison_id', id).order('id', ascending: true);
+
+  static Future<Map<String, String>> myComparisonVotes(int id) async {
+    final rows = await supa.from('comparison_votes').select('job_id,winner').eq('comparison_id', id).eq('user_id', uid);
+    return {for (final r in rows) r['job_id'] as String: r['winner'] as String};
+  }
+
+  static Future<void> voteComparison(int id, String jobId, String winner) => supa
+      .from('comparison_votes')
+      .upsert({'comparison_id': id, 'job_id': jobId, 'user_id': uid, 'winner': winner});
+
+  // ---------------------------------------------------------------- 👍/👎 on a job's AI output (any user)
+  static Future<Map<String, int>> myFeedback(String jobId) async {
+    final rows = await supa.from('model_feedback').select('agent,rating').eq('job_id', jobId).eq('user_id', uid);
+    return {for (final r in rows) r['agent'] as String: (r['rating'] as num).toInt()};
+  }
+
+  static Future<void> setFeedback(String jobId, String agent, String model, int? rating) => rating == null
+      ? supa.from('model_feedback').delete().eq('user_id', uid).eq('job_id', jobId).eq('agent', agent)
+      : supa.from('model_feedback').upsert(
+          {'user_id': uid, 'job_id': jobId, 'agent': agent, 'model': model, 'rating': rating});
+
   static Future<void> setAgentsPaused(bool paused) =>
       supa.rpc('set_agents_paused', params: {'p_paused': paused, 'p_reason': paused ? 'Paused from the app' : null});
 

@@ -135,6 +135,10 @@ class KeyPool:
         self.store.touch(key)
 
 
+PROVIDERS = ("gemini", "groq", "openrouter", "adzuna", "rapidapi")
+AI_PROVIDERS = ("gemini", "groq", "openrouter")
+
+
 def shared_keys(store: KeyStateStore) -> dict[str, list[Key]]:
     """The owner's shared pool, in the order set in the app (Settings → Shared keys).
 
@@ -145,7 +149,9 @@ def shared_keys(store: KeyStateStore) -> dict[str, list[Key]]:
 
     env_keys = ([Key("gemini", k) for k in config.SHARED_GEMINI_KEYS]
                 + [Key("adzuna", k, a) for a, k in config.SHARED_ADZUNA_KEYS]
-                + [Key("rapidapi", k) for k in config.SHARED_RAPIDAPI_KEYS])
+                + [Key("rapidapi", k) for k in config.SHARED_RAPIDAPI_KEYS]
+                + [Key("groq", k) for k in config.SHARED_GROQ_KEYS]
+                + [Key("openrouter", k) for k in config.SHARED_OPENROUTER_KEYS])
     by_fp = {k.fingerprint: k for k in env_keys}
     try:
         rows = db.sync_shared_keys([
@@ -153,15 +159,15 @@ def shared_keys(store: KeyStateStore) -> dict[str, list[Key]]:
              "label": "GitHub secret", "app_id": k.app_id} for k in env_keys])
     except Exception as exc:
         log.warning("shared_api_keys unavailable (%s); using GitHub-secret keys only", exc)
-        return {p: [k for k in env_keys if k.provider == p] for p in ("gemini", "adzuna", "rapidapi")}
+        return {p: [k for k in env_keys if k.provider == p] for p in PROVIDERS}
 
-    pools: dict[str, list[Key]] = {"gemini": [], "adzuna": [], "rapidapi": []}
+    pools: dict[str, list[Key]] = {p: [] for p in PROVIDERS}
     for r in rows:  # enabled rows, ordered by priority
         if r["source"] == "github":
             env = by_fp.get(r["fingerprint"])
-            if env:  # a key removed from GitHub secrets simply disappears
+            if env and r["provider"] in pools:  # a key removed from GitHub secrets simply disappears
                 pools[r["provider"]].append(Key(env.provider, env.value, env.app_id, r["id"], r["label"] or "GitHub secret", "shared_api_keys"))
-        elif r.get("key_value"):
+        elif r.get("key_value") and r["provider"] in pools:
             pools[r["provider"]].append(Key(r["provider"], r["key_value"], r.get("app_id"), r["id"], r["label"] or "", "shared_api_keys"))
     return pools
 
@@ -175,4 +181,4 @@ def build_pools(account: dict, user_keys: list[dict], store: KeyStateStore, shar
         mine = [Key(provider, r["key_value"], r.get("app_id"), r["id"], r.get("label") or "") for r in own if r["provider"] == provider]
         return KeyPool(provider, mine + (shared.get(provider, []) if use_shared else []), store)
 
-    return {p: pool(p) for p in ("gemini", "adzuna", "rapidapi")}
+    return {p: pool(p) for p in PROVIDERS}

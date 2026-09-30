@@ -119,6 +119,10 @@ class _Body extends StatelessWidget {
               ),
             ),
           ],
+          if (job.models.keys.any(_FeedbackCard.agents.containsKey)) ...[
+            const SizedBox(height: 12),
+            _FeedbackCard(job: job),
+          ],
           if (job.addedSkills.isNotEmpty) ...[
             const SizedBox(height: 12),
             AddedSkillsCard(skills: job.addedSkills),
@@ -471,6 +475,73 @@ class _ApplySheetState extends State<ApplySheet> {
             ]);
           },
         ),
+      ),
+    );
+  }
+}
+
+
+/// 👍/👎 on what each agent produced; feeds the model scorecard (admin → AI models).
+class _FeedbackCard extends StatefulWidget {
+  const _FeedbackCard({required this.job});
+  final Job job;
+
+  static const agents = {'tailor': 'Tailored resume', 'coach': 'Interview prep', 'writer': 'Cover letter'};
+
+  @override
+  State<_FeedbackCard> createState() => _FeedbackCardState();
+}
+
+class _FeedbackCardState extends State<_FeedbackCard> {
+  Map<String, int> _ratings = {};
+
+  @override
+  void initState() {
+    super.initState();
+    Api.myFeedback(widget.job.jobId).then((r) => mounted ? setState(() => _ratings = r) : null).catchError((_) {});
+  }
+
+  Future<void> _rate(String agent, String model, int value) async {
+    final next = _ratings[agent] == value ? null : value;
+    setState(() => next == null ? _ratings.remove(agent) : _ratings[agent] = next);
+    try {
+      await Api.setFeedback(widget.job.jobId, agent, model, next);
+    } catch (e) {
+      if (mounted) toast(context, 'Could not save: $e');
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final models = widget.job.models;
+    return Card(
+      child: Padding(
+        padding: const EdgeInsets.fromLTRB(16, 12, 8, 8),
+        child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+          Text("Rate the AI's work", style: theme.textTheme.titleSmall),
+          Text('Helps pick the best model for each agent.', style: theme.textTheme.bodySmall),
+          for (final e in _FeedbackCard.agents.entries)
+            if (models[e.key] != null)
+              Row(children: [
+                Expanded(
+                  child: Text.rich(TextSpan(children: [
+                    TextSpan(text: e.value),
+                    if (Api.isAdmin) TextSpan(text: '  ${models[e.key]}', style: theme.textTheme.bodySmall),
+                  ])),
+                ),
+                IconButton(
+                  icon: Icon(_ratings[e.key] == 1 ? Icons.thumb_up : Icons.thumb_up_outlined,
+                      color: _ratings[e.key] == 1 ? Colors.green : null),
+                  onPressed: () => _rate(e.key, models[e.key]!, 1),
+                ),
+                IconButton(
+                  icon: Icon(_ratings[e.key] == -1 ? Icons.thumb_down : Icons.thumb_down_outlined,
+                      color: _ratings[e.key] == -1 ? Colors.red : null),
+                  onPressed: () => _rate(e.key, models[e.key]!, -1),
+                ),
+              ]),
+        ]),
       ),
     );
   }

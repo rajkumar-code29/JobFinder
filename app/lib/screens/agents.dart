@@ -45,6 +45,11 @@ class _AgentsScreenState extends State<AgentsScreen> {
           title: const Text('Agents'),
           actions: [
             if (Api.isAdmin) ...[
+              IconButton(
+                tooltip: 'AI models: routing, scorecard, comparisons',
+                icon: const Icon(Icons.hub_outlined),
+                onPressed: () => context.go('/models'),
+              ),
               if (AppConfig.githubRepo.isNotEmpty)
                 IconButton(
                   tooltip: 'Open the workflow on GitHub',

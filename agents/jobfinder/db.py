@@ -157,6 +157,41 @@ def queued_jobs(user_id: str, limit: int) -> list[dict]:
 
 
 # ---------------------------------------------------------------- storage
+def model_routing() -> dict[str, list[str]]:
+    """Admin-configured model order per agent (migration 006); empty → built-in defaults."""
+    try:
+        rows = sb.table("model_routing").select("agent,chain").execute().data
+    except Exception as exc:
+        log.warning("model_routing unavailable (%s); using defaults", exc)
+        return {}
+    return {r["agent"]: r["chain"] for r in rows if r.get("chain")}
+
+
+def record_model_stats(rows: list[dict]) -> None:
+    """Add this run's per agent/model counters to today's scorecard row."""
+    if not rows:
+        return
+    day = datetime.now(timezone.utc).date().isoformat()
+    fields = ("ok", "rate_limited", "overloaded", "invalid_json", "too_large", "errors", "ms")
+    try:
+        for r in rows:
+            existing = (sb.table("model_stats").select("*").eq("day", day).eq("agent", r["agent"])
+                        .eq("model", r["model"]).execute().data)
+            base = existing[0] if existing else {"day": day, "agent": r["agent"], "model": r["model"]}
+            sb.table("model_stats").upsert({**base, **{f: int(base.get(f) or 0) + int(r.get(f) or 0) for f in fields}},
+                                           on_conflict="day,agent,model").execute()
+    except Exception as exc:
+        log.warning("could not record model stats: %s", exc)
+
+
+def model_meta(job: dict, agent: str, model: str | None) -> dict:
+    """job.meta with the model that produced `agent`'s output recorded (for 👍/👎 feedback and the scorecard)."""
+    meta = dict(job.get("meta") or {})
+    if model:
+        meta["models"] = {**(meta.get("models") or {}), agent: model}
+    return meta
+
+
 def job_dir(job: dict) -> str:
     """Storage folder for a job: jobs/<user_id>/<job_id>/"""
     return f"{job['user_id']}/{job['job_id']}"

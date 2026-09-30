@@ -33,6 +33,14 @@ class ModelUnavailable(StopUser):
     pass
 
 
+class RateLimited(StopUser):
+    """Circuit breaker tripped: Gemini keeps saying 'too many requests'. Stop, don't hammer the account."""
+
+
+class SearchUnavailable(RuntimeError):
+    """Google-grounded search is being rate-limited: skip search for the rest of the run (other work continues)."""
+
+
 _pool: KeyPool | None = None
 _budget = 0
 calls_made = 0
@@ -118,12 +126,60 @@ def _resolve(model: str) -> str:
     return _replacements.get(model, model)
 
 
-def activate(pool: KeyPool, budget: int) -> None:
-    """Start a user's turn: their key pool and budget. Notices are per user, so they reset too."""
-    global _pool, _budget, calls_made
+# Circuit breaker. Only per-minute style rejections count: daily-limit / "limit: 0" answers park the key and are
+# never retried, so they aren't hammering.
+MAX_CONSECUTIVE_REJECTIONS = 4   # in a row without any success
+MAX_REJECTIONS_PER_RUN = 12
+MAX_SEARCH_REJECTIONS = 2        # Google-grounded search gives up sooner; it's optional
+BREAKER_PAUSE = timedelta(hours=1)
+_rejections = _consecutive = _search_rejections = 0
+_rejected_keys: dict[str, object] = {}
+_search_disabled = False
+_on_event = None
+
+
+def activate(pool: KeyPool, budget: int, on_event=None) -> None:
+    """Start a user's turn: their key pool, budget and breaker. Notices are per user, so they reset too."""
+    global _pool, _budget, calls_made, _rejections, _consecutive, _search_rejections, _search_disabled, _on_event
     _pool, _budget, calls_made = pool, budget, 0
+    _rejections = _consecutive = _search_rejections = 0
+    _search_disabled = False
+    _rejected_keys.clear()
+    _on_event = on_event
     notices.clear()
     _fallbacks_noted.clear()
+
+
+def _event(message: str) -> None:
+    log.warning(message)
+    if _on_event:
+        try:
+            _on_event(message)
+        except Exception:
+            pass
+
+
+def _rejected(key, model: str, reason: str, search: bool) -> None:
+    """Count a per-minute style rejection; trip the breaker when Gemini keeps refusing."""
+    global _rejections, _consecutive, _search_rejections, _search_disabled
+    _rejections += 1
+    _consecutive += 1
+    _rejected_keys[key.fingerprint] = key
+    if _rejections <= 6:
+        _event(f"Gemini rejected a request ({model}, {reason})")
+    if search:
+        _search_rejections += 1
+        if _search_rejections >= MAX_SEARCH_REJECTIONS:
+            _search_disabled = True
+            _event("Google-grounded search keeps being rate-limited: skipping it for the rest of this run")
+            raise SearchUnavailable("Google search rate-limited")
+    if _consecutive >= MAX_CONSECUTIVE_REJECTIONS or _rejections >= MAX_REJECTIONS_PER_RUN:
+        until = utcnow() + BREAKER_PAUSE
+        for k in _rejected_keys.values():
+            _pool.park(k, ALL_SCOPES, until, f"paused by circuit breaker after repeated 429s ({reason})")
+        raise RateLimited(
+            f"Gemini rejected {_rejections} requests ({reason}). Stopped Gemini work for this run to protect the "
+            f"account; the rejected keys are paused until {until:%H:%M} UTC.")
 
 
 def _client(key) -> genai.Client:
@@ -132,7 +188,8 @@ def _client(key) -> genai.Client:
     return _clients[key.fingerprint]
 
 
-MAX_WAIT_PER_CALL = 240  # seconds one request may spend waiting out per-minute limits before giving up
+MAX_WAIT_PER_CALL = 90   # seconds one request may spend waiting out per-minute limits before giving up
+MAX_WAIT_PER_SEARCH = 30
 _interval: dict[str, float] = {}  # "<key>:<model>" -> seconds between calls; grows when Gemini says "too many"
 
 
@@ -196,8 +253,11 @@ def _generate(prompt: str, *, system: str | None, tier: str, json_mode: bool, se
     elif json_mode:
         cfg.response_mime_type = "application/json"
 
+    global _consecutive
+    if search and _search_disabled:
+        raise SearchUnavailable("Google search skipped for the rest of this run (rate-limited)")
     chain = build_chain(tier, _pool.keys[0])
-    deadline = time.monotonic() + MAX_WAIT_PER_CALL
+    deadline = time.monotonic() + (MAX_WAIT_PER_SEARCH if search else MAX_WAIT_PER_CALL)
     last_error, server_errors = "no response", 0
     for position, configured in enumerate(chain):
         model = _resolve(configured)
@@ -219,6 +279,7 @@ def _generate(prompt: str, *, system: str | None, tier: str, json_mode: bool, se
             try:
                 resp = _client(key).models.generate_content(model=model, contents=prompt, config=cfg)
                 _pool.used(key)
+                _consecutive = 0
                 return resp
             except errors.APIError as exc:
                 code, msg = getattr(exc, "code", None), str(exc)
@@ -232,6 +293,7 @@ def _generate(prompt: str, *, system: str | None, tier: str, json_mode: bool, se
                     else:
                         _pool.cool(key, model, _retry_delay(msg))
                         _slow_down(key, model)
+                        _rejected(key, model, last_error, search)  # may stop the run (breaker)
                     continue
                 if code == 404 and re.search(r"model", msg, re.I):
                     calls_made -= 1

@@ -8,5 +8,9 @@ class AppConfig {
   /// "owner/repo" – used to link to the agents workflow for manual runs.
   static const githubRepo = String.fromEnvironment('GITHUB_REPO');
 
+  /// Accounts with an email on this domain get the admin tools (shared keys, Run now).
+  /// The database enforces the same rule (public.is_admin()); this only decides what the UI shows.
+  static const adminEmailDomain = String.fromEnvironment('ADMIN_EMAIL_DOMAIN', defaultValue: 'rajkumar.codes');
+
   static bool get isConfigured => supabaseUrl.isNotEmpty && supabaseAnonKey.isNotEmpty;
 }

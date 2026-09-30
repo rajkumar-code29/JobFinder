@@ -165,6 +165,24 @@ later runs skip it. Invalid keys are parked for 24 h. Users see each key's statu
   Google and Adzuna don't allow it, and they can suspend accounts that do.
 - Everyone's agents run on the owner's GitHub Actions minutes.
 
+## Admin tools (`@rajkumar.codes` accounts)
+Run [`004_admin_tools.sql`](supabase/migrations/004_admin_tools.sql), then store the GitHub token for **Run now**
+in Supabase Vault (SQL editor, your fine-grained token with *Actions: Read and write* on this repo):
+```sql
+select vault.create_secret('github_pat_…', 'gh_dispatch_token', 'Starts the JobFinder agents workflow');
+```
+- **Settings → Shared keys (admin):** the shared key pool, including GitHub-secret keys (shown by their last 4
+  characters). See which key is **In use**, when it was last used, whether it's paused and why; switch keys on/off,
+  **Use this key first**, add or remove keys stored in the app.
+- **Agents → Run now:** starts the agents workflow (at most once every 5 minutes).
+- The database enforces admin access (`public.is_admin()`), not just the UI.
+
+## Gemini safety stop
+Per-minute rejections (429) are counted per user per run: 4 in a row or 12 in total stop all Gemini work for that run
+and pause the rejected keys for 1 hour. Google-grounded search gives up after 2 and is skipped for the rest of the run.
+Each request waits at most 90 s (search 30 s); the workflow is capped at 40 minutes. Rejections and Google's reasons
+appear live in the run log (Agents → Runs).
+
 ## Local development
 ```bash
 # agents

@@ -44,15 +44,18 @@ class _AgentsScreenState extends State<AgentsScreen> {
         appBar: AppBar(
           title: const Text('Agents'),
           actions: [
-            if (AppConfig.githubRepo.isNotEmpty)
-              TextButton.icon(
-                icon: const Icon(Icons.play_arrow),
-                label: const Text('Run now'),
-                onPressed: () => launchUrl(
-                  Uri.parse('https://github.com/${AppConfig.githubRepo}/actions/workflows/agents.yml'),
-                  mode: LaunchMode.externalApplication,
+            if (Api.isAdmin) ...[
+              if (AppConfig.githubRepo.isNotEmpty)
+                IconButton(
+                  tooltip: 'Open the workflow on GitHub',
+                  icon: const Icon(Icons.open_in_new),
+                  onPressed: () => launchUrl(
+                    Uri.parse('https://github.com/${AppConfig.githubRepo}/actions/workflows/agents.yml'),
+                    mode: LaunchMode.externalApplication,
+                  ),
                 ),
-              ),
+              const _RunNowButton(),
+            ],
           ],
           bottom: const TabBar(tabs: [Tab(text: 'Activity'), Tab(text: 'Runs')]),
         ),
@@ -198,4 +201,79 @@ class _PipelineRunCard extends StatelessWidget {
       ),
     );
   }
+}
+
+
+/// Admin only: start the agents workflow now (the database holds the GitHub token and re-checks the email domain).
+class _RunNowButton extends StatefulWidget {
+  const _RunNowButton();
+
+  @override
+  State<_RunNowButton> createState() => _RunNowButtonState();
+}
+
+class _RunNowButtonState extends State<_RunNowButton> {
+  bool _busy = false;
+
+  Future<void> _run() async {
+    final allSources = await showDialog<bool>(
+      context: context,
+      builder: (ctx) {
+        var all = true;
+        return StatefulBuilder(
+          builder: (ctx, set) => AlertDialog(
+            title: const Text('Run the agents now?'),
+            content: Column(mainAxisSize: MainAxisSize.min, crossAxisAlignment: CrossAxisAlignment.start, children: [
+              const Text('Starts a full run on GitHub for every user: scan, rate, then process queued jobs. '
+                  'It shows up under Runs within a minute or two.'),
+              CheckboxListTile(
+                contentPadding: EdgeInsets.zero,
+                value: all,
+                onChanged: (v) => set(() => all = v ?? true),
+                title: const Text('Scan all sources'),
+                subtitle: const Text('Off = respect the usual schedule (Remotive every 6h, Google search every 4h)'),
+              ),
+            ]),
+            actions: [
+              TextButton(onPressed: () => Navigator.pop(ctx), child: const Text('Cancel')),
+              FilledButton(onPressed: () => Navigator.pop(ctx, all), child: const Text('Run now')),
+            ],
+          ),
+        );
+      },
+    );
+    if (allSources == null || !mounted) return;
+    setState(() => _busy = true);
+    try {
+      final id = await Api.requestAgentsRun(allSources: allSources);
+      int? code;
+      String? message;
+      for (var i = 0; i < 10 && code == null; i++) {
+        await Future.delayed(const Duration(seconds: 1));
+        (code, message) = await Api.agentsRunRequestStatus(id);
+      }
+      if (!mounted) return;
+      toast(
+        context,
+        code == 204
+            ? 'Run started – it appears under Runs in a minute or two'
+            : code == null
+                ? 'Run requested – GitHub hasn\'t answered yet; check Runs shortly'
+                : 'GitHub refused the run ($code): ${message ?? ''}',
+      );
+    } catch (e) {
+      if (mounted) toast(context, '$e'.replaceFirst(RegExp(r'^.*?message: '), ''));
+    } finally {
+      if (mounted) setState(() => _busy = false);
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) => TextButton.icon(
+        onPressed: _busy ? null : _run,
+        icon: _busy
+            ? const SizedBox(width: 16, height: 16, child: CircularProgressIndicator(strokeWidth: 2))
+            : const Icon(Icons.play_arrow),
+        label: const Text('Run now'),
+      );
 }

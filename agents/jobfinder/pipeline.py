@@ -16,7 +16,7 @@ import sys
 
 from . import config, db, llm
 from .agents import coach, profile as profile_agent, salary, scorer, scout, tailor, writer
-from .keys import KeyStateStore, build_pools
+from .keys import KeyStateStore, build_pools, shared_keys
 
 log = logging.getLogger("jobfinder")
 
@@ -43,13 +43,13 @@ def process(run: db.PipelineRun, job: dict, profile: dict, brief: str, settings:
     run.note(f"{jid} ready: {job['title']} @ {job['company']} (ATS {job.get('ats_score')}→{job.get('tailored_ats_score')})")
 
 
-def run_user(account: dict, args, store: KeyStateStore, only_job: dict | None) -> bool:
+def run_user(account: dict, args, store: KeyStateStore, shared: dict, only_job: dict | None) -> bool:
     uid = account["user_id"]
     run = db.PipelineRun(args.trigger, uid)
     run.note(f"User {db.user_label(uid)}")
     status = "success"
-    pools = build_pools(account, db.user_api_keys(uid), store)
-    llm.activate(pools["gemini"], int(account.get("llm_calls_per_run") or 40))
+    pools = build_pools(account, db.user_api_keys(uid), store, shared)
+    llm.activate(pools["gemini"], int(account.get("llm_calls_per_run") or 40), on_event=run.note)
     try:
         if not pools["gemini"]:
             run.note("No Gemini API key available: add one in Settings → API keys. Skipping this user.")
@@ -144,9 +144,10 @@ def main(argv=None) -> int:
             return 1
         accounts = [a for a in accounts if a["user_id"] == wanted.id]
 
+    shared = shared_keys(store)
     ok = True
     for account in accounts:
-        ok = run_user(account, args, store, only_job) and ok
+        ok = run_user(account, args, store, shared, only_job) and ok
     return 0 if ok else 1
 
 

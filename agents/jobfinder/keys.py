@@ -42,8 +42,9 @@ class Key:
     provider: str
     value: str
     app_id: str | None = None
-    row_id: str | None = None  # api_keys.id for keys a user added; None for shared (GitHub secret) keys
+    row_id: str | None = None  # row in `table` that shows this key's status in the app
     label: str = ""
+    table: str = "api_keys"    # api_keys (a user's own keys) or shared_api_keys (the owner's shared pool)
 
     @property
     def fingerprint(self) -> str:
@@ -74,16 +75,23 @@ class KeyStateStore:
             "id": f"{key.fingerprint}:{scope}", "provider": key.provider,
             "exhausted_until": until.isoformat(), "last_error": error[:500], "updated_at": utcnow().isoformat(),
         }).execute()
-        if key.row_id:  # show it on the user's Settings screen
-            db.sb.table("api_keys").update(
-                {"exhausted_until": until.isoformat(), "last_error": f"{scope}: {error}"[:500]}
-            ).eq("id", key.row_id).execute()
+        if key.row_id:  # show it in the app (Settings → API keys / Shared keys)
+            values = {"exhausted_until": until.isoformat(), "last_error": f"{scope}: {error}"[:500]}
+            if key.table == "shared_api_keys":
+                values["in_use"] = False
+            db.sb.table(key.table).update(values).eq("id", key.row_id).execute()
         log.warning("%s %s parked until %s (%s)", key.provider, key.name, until.isoformat(timespec="minutes"), error)
 
     def touch(self, key: Key) -> None:
-        if key.row_id and key.row_id not in self._touched:
-            self._touched.add(key.row_id)
-            db.sb.table("api_keys").update({"last_used_at": utcnow().isoformat(), "last_error": None}).eq("id", key.row_id).execute()
+        """First successful call with a key this run: record it (and, for shared keys, mark it as the one in use)."""
+        if not key.row_id or key.row_id in self._touched:
+            return
+        self._touched.add(key.row_id)
+        values = {"last_used_at": utcnow().isoformat(), "last_error": None}
+        if key.table == "shared_api_keys":
+            db.sb.table(key.table).update({"in_use": False}).eq("provider", key.provider).neq("id", key.row_id).execute()
+            values["in_use"] = True
+        db.sb.table(key.table).update(values).eq("id", key.row_id).execute()
 
 
 class KeyPool:
@@ -127,18 +135,44 @@ class KeyPool:
         self.store.touch(key)
 
 
-def build_pools(account: dict, user_keys: list[dict], store: KeyStateStore) -> dict[str, KeyPool]:
-    """User's own keys first (by priority), then the shared keys if the account may use them."""
+def shared_keys(store: KeyStateStore) -> dict[str, list[Key]]:
+    """The owner's shared pool, in the order set in the app (Settings → Shared keys).
+
+    Keys from GitHub secrets are registered in shared_api_keys by fingerprint (value stays in GitHub) so the
+    app can show and reorder/disable them; keys added in the app are stored there directly. Falls back to the
+    GitHub-secret keys alone if the table doesn't exist yet (migration 004 not applied)."""
     from . import config
 
+    env_keys = ([Key("gemini", k) for k in config.SHARED_GEMINI_KEYS]
+                + [Key("adzuna", k, a) for a, k in config.SHARED_ADZUNA_KEYS]
+                + [Key("rapidapi", k) for k in config.SHARED_RAPIDAPI_KEYS])
+    by_fp = {k.fingerprint: k for k in env_keys}
+    try:
+        rows = db.sync_shared_keys([
+            {"provider": k.provider, "source": "github", "fingerprint": k.fingerprint, "hint": f"…{k.value[-4:]}",
+             "label": "GitHub secret", "app_id": k.app_id} for k in env_keys])
+    except Exception as exc:
+        log.warning("shared_api_keys unavailable (%s); using GitHub-secret keys only", exc)
+        return {p: [k for k in env_keys if k.provider == p] for p in ("gemini", "adzuna", "rapidapi")}
+
+    pools: dict[str, list[Key]] = {"gemini": [], "adzuna": [], "rapidapi": []}
+    for r in rows:  # enabled rows, ordered by priority
+        if r["source"] == "github":
+            env = by_fp.get(r["fingerprint"])
+            if env:  # a key removed from GitHub secrets simply disappears
+                pools[r["provider"]].append(Key(env.provider, env.value, env.app_id, r["id"], r["label"] or "GitHub secret", "shared_api_keys"))
+        elif r.get("key_value"):
+            pools[r["provider"]].append(Key(r["provider"], r["key_value"], r.get("app_id"), r["id"], r["label"] or "", "shared_api_keys"))
+    return pools
+
+
+def build_pools(account: dict, user_keys: list[dict], store: KeyStateStore, shared: dict[str, list[Key]]) -> dict[str, KeyPool]:
+    """User's own keys first (by priority), then the shared pool if the account may use it."""
     own = sorted(user_keys, key=lambda r: (r.get("priority") or 0, r.get("created_at") or ""))
-    shared = account.get("use_shared_keys", False)
+    use_shared = account.get("use_shared_keys", False)
 
-    def mine(provider):
-        return [Key(provider, r["key_value"], r.get("app_id"), r["id"], r.get("label") or "") for r in own if r["provider"] == provider]
+    def pool(provider):
+        mine = [Key(provider, r["key_value"], r.get("app_id"), r["id"], r.get("label") or "") for r in own if r["provider"] == provider]
+        return KeyPool(provider, mine + (shared.get(provider, []) if use_shared else []), store)
 
-    return {
-        "gemini": KeyPool("gemini", mine("gemini") + ([Key("gemini", k) for k in config.SHARED_GEMINI_KEYS] if shared else []), store),
-        "adzuna": KeyPool("adzuna", mine("adzuna") + ([Key("adzuna", k, a) for a, k in config.SHARED_ADZUNA_KEYS] if shared else []), store),
-        "rapidapi": KeyPool("rapidapi", mine("rapidapi") + ([Key("rapidapi", k) for k in config.SHARED_RAPIDAPI_KEYS] if shared else []), store),
-    }
+    return {p: pool(p) for p in ("gemini", "adzuna", "rapidapi")}

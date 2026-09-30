@@ -27,7 +27,7 @@ concurrency:
 jobs:
   run:
     runs-on: ubuntu-latest
-    timeout-minutes: 55
+    timeout-minutes: 40   # hard stop; the circuit breaker normally ends Gemini trouble much sooner
     defaults:
       run:
         working-directory: agents

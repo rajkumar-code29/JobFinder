@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import logging
+import time
 import traceback
 from contextlib import contextmanager
 from datetime import datetime, timedelta, timezone
@@ -29,6 +30,14 @@ def active_accounts() -> list[dict]:
 
 def user_api_keys(user_id: str) -> list[dict]:
     return sb.table("api_keys").select("*").eq("user_id", user_id).execute().data
+
+
+def sync_shared_keys(github_keys: list[dict]) -> list[dict]:
+    """Register GitHub-secret keys (by fingerprint, never the value) and return the enabled shared keys in order."""
+    if github_keys:
+        sb.table("shared_api_keys").upsert(github_keys, on_conflict="fingerprint", ignore_duplicates=True).execute()
+    return (sb.table("shared_api_keys").select("*").eq("enabled", True)
+            .order("priority").order("created_at").execute().data)
 
 
 def user_label(user_id: str) -> str:
@@ -173,10 +182,16 @@ class PipelineRun:
         self.id = sb.table("pipeline_runs").insert({"trigger": trigger, "user_id": user_id}).execute().data[0]["id"]
         self.scanned = self.matched = self.processed = self.errors = 0
         self.lines: list[str] = []
+        self._saved_at = 0.0
 
     def note(self, msg: str) -> None:
         log.info(msg)
         self.lines.append(f"{datetime.now(timezone.utc):%H:%M:%S} {msg}")
+        if time.monotonic() - self._saved_at > 15:  # keep the app's run log live, even if the run is cancelled
+            try:
+                self.save()
+            except Exception:
+                pass
 
     def save(self, status: str | None = None) -> None:
         values = {
@@ -187,6 +202,7 @@ class PipelineRun:
         if status:
             values.update(status=status, finished_at=now_iso())
         sb.table("pipeline_runs").update(values).eq("id", self.id).execute()
+        self._saved_at = time.monotonic()
 
     @contextmanager
     def agent(self, name: str, job_id: str | None = None, message: str | None = None):

@@ -4,6 +4,7 @@ import 'dart:typed_data';
 import 'package:supabase_flutter/supabase_flutter.dart';
 import 'package:url_launcher/url_launcher.dart';
 
+import 'config.dart';
 import 'models.dart';
 
 SupabaseClient get supa => Supabase.instance.client;
@@ -135,4 +136,46 @@ class Api {
       });
 
   static Future<void> deleteApiKey(String id) => supa.from('api_keys').delete().eq('id', id);
+
+  // ---------------------------------------------------------------- admin (@rajkumar.codes) tools
+  static bool get isAdmin =>
+      (supa.auth.currentUser?.email ?? '').toLowerCase().endsWith('@${AppConfig.adminEmailDomain}');
+
+  static const _sharedColumns =
+      'id,provider,label,source,app_id,hint,priority,enabled,in_use,exhausted_until,last_error,last_used_at,created_at';
+
+  static Future<List<Map<String, dynamic>>> sharedKeys() =>
+      supa.from('shared_api_keys').select(_sharedColumns).order('provider').order('priority').order('created_at');
+
+  static Future<void> addSharedKey({
+    required String provider,
+    required String key,
+    String label = '',
+    String? appId,
+    int priority = 0,
+  }) =>
+      supa.from('shared_api_keys').insert({
+        'provider': provider,
+        'key_value': key.trim(),
+        'label': label.trim(),
+        'app_id': appId?.trim(),
+        'priority': priority,
+      });
+
+  static Future<void> updateSharedKey(String id, Map<String, dynamic> values) =>
+      supa.from('shared_api_keys').update(values).eq('id', id);
+
+  static Future<void> deleteSharedKey(String id) => supa.from('shared_api_keys').delete().eq('id', id);
+
+  /// Starts the agents workflow on GitHub (via the database, which holds the GitHub token). Returns a request id.
+  static Future<int> requestAgentsRun({bool allSources = true}) async =>
+      (await supa.rpc('request_agents_run', params: {'all_sources': allSources}) as num).toInt();
+
+  /// GitHub's answer for a request: 204 = started. Null while the request is still in flight.
+  static Future<(int?, String?)> agentsRunRequestStatus(int id) async {
+    final rows = await supa.rpc('agents_run_request_status', params: {'p_id': id}) as List;
+    if (rows.isEmpty) return (null, null);
+    final r = rows.first as Map<String, dynamic>;
+    return ((r['status_code'] as num?)?.toInt(), r['message'] as String?);
+  }
 }

@@ -104,6 +104,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
                 maxWidth: 860,
                 child: Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
                   const _ParentDocs(),
+                  if (Api.isAdmin) const _SharedKeys(),
                   const _ApiKeys(),
                   _Section(
                     title: 'Locations',
@@ -588,8 +589,11 @@ class _KeyTile extends StatelessWidget {
 }
 
 class _AddKeyDialog extends StatefulWidget {
-  const _AddKeyDialog({required this.existing});
+  const _AddKeyDialog({required this.existing, this.shared = false});
   final List<Map<String, dynamic>> existing;
+
+  /// true = add to the shared pool (admin), false = the user's own keys
+  final bool shared;
 
   @override
   State<_AddKeyDialog> createState() => _AddKeyDialogState();
@@ -617,7 +621,7 @@ class _AddKeyDialogState extends State<_AddKeyDialog> {
         .where((k) => k['provider'] == _provider)
         .fold<int>(-1, (m, k) => ((k['priority'] as int?) ?? 0) > m ? (k['priority'] as int? ?? 0) : m);
     try {
-      await Api.addApiKey(
+      await (widget.shared ? Api.addSharedKey : Api.addApiKey)(
         provider: _provider,
         key: _key.text,
         label: _label.text,
@@ -768,6 +772,154 @@ class LocationPickerState extends State<LocationPicker> {
         ]),
       ),
       actions: [TextButton(onPressed: () => Navigator.pop(context), child: const Text('Cancel'))],
+    );
+  }
+}
+
+
+/// Admin only (@rajkumar.codes): the shared key pool used for the owner's runs (and users allowed to share it).
+/// Includes the keys stored as GitHub secrets – listed by their last 4 characters, the values stay in GitHub.
+class _SharedKeys extends StatefulWidget {
+  const _SharedKeys();
+
+  @override
+  State<_SharedKeys> createState() => _SharedKeysState();
+}
+
+class _SharedKeysState extends State<_SharedKeys> {
+  late Future<List<Map<String, dynamic>>> _future = Api.sharedKeys();
+  bool _busy = false;
+
+  void _reload() => setState(() => _future = Api.sharedKeys());
+
+  Future<void> _change(Future<void> Function() action) async {
+    setState(() => _busy = true);
+    try {
+      await action();
+      _reload();
+    } catch (e) {
+      if (mounted) toast(context, 'Could not update: $e');
+    } finally {
+      if (mounted) setState(() => _busy = false);
+    }
+  }
+
+  Future<void> _useFirst(Map<String, dynamic> k, List<Map<String, dynamic>> all) {
+    final lowest = all
+        .where((x) => x['provider'] == k['provider'])
+        .map((x) => (x['priority'] as num).toInt())
+        .fold<int>(1 << 30, (a, b) => a < b ? a : b);
+    return _change(() => Api.updateSharedKey(k['id'] as String, {'priority': lowest - 1, 'enabled': true}));
+  }
+
+  @override
+  Widget build(BuildContext context) => _Section(
+        title: 'Shared keys (admin)',
+        subtitle: 'Used for your runs and for users you allow to share them. Tried top to bottom; a key that hits '
+            'its limit or is paused by the safety stop is skipped until it resets. GitHub-secret keys are shown by '
+            'their last 4 characters.',
+        child: FutureBuilder<List<Map<String, dynamic>>>(
+          future: _future,
+          builder: (context, snap) {
+            if (snap.hasError) {
+              return Text('Shared keys unavailable (${snap.error}). Run supabase/migrations/004_admin_tools.sql.');
+            }
+            if (!snap.hasData) return const LinearProgressIndicator();
+            final keys = snap.data!;
+            final theme = Theme.of(context);
+            return Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
+              if (_busy) const LinearProgressIndicator(),
+              if (keys.isEmpty)
+                Text('No shared keys yet. GitHub-secret keys appear here after the next agents run.',
+                    style: theme.textTheme.bodySmall),
+              for (final entry in providerInfo.entries)
+                if (keys.any((k) => k['provider'] == entry.key)) ...[
+                  Padding(
+                    padding: const EdgeInsets.only(top: 8),
+                    child: Row(children: [
+                      Icon(entry.value.$3, size: 18),
+                      const SizedBox(width: 6),
+                      Text(entry.value.$1, style: theme.textTheme.labelLarge),
+                    ]),
+                  ),
+                  for (final (i, k) in keys.where((k) => k['provider'] == entry.key).indexed)
+                    _SharedKeyTile(
+                      index: i + 1,
+                      data: k,
+                      onToggle: (v) => _change(() => Api.updateSharedKey(k['id'] as String, {'enabled': v})),
+                      onUseFirst: i == 0 ? null : () => _useFirst(k, keys),
+                      onDelete: k['source'] == 'app' ? () => _change(() => Api.deleteSharedKey(k['id'] as String)) : null,
+                    ),
+                ],
+              const SizedBox(height: 12),
+              Align(
+                alignment: Alignment.centerLeft,
+                child: FilledButton.tonalIcon(
+                  onPressed: () async {
+                    final added = await showDialog<bool>(
+                      context: context,
+                      builder: (_) => _AddKeyDialog(existing: keys, shared: true),
+                    );
+                    if (added == true) _reload();
+                  },
+                  icon: const Icon(Icons.add),
+                  label: const Text('Add shared key'),
+                ),
+              ),
+            ]);
+          },
+        ),
+      );
+}
+
+class _SharedKeyTile extends StatelessWidget {
+  const _SharedKeyTile({required this.index, required this.data, required this.onToggle, this.onUseFirst, this.onDelete});
+  final int index;
+  final Map<String, dynamic> data;
+  final ValueChanged<bool> onToggle;
+  final VoidCallback? onUseFirst;
+  final VoidCallback? onDelete;
+
+  @override
+  Widget build(BuildContext context) {
+    final enabled = data['enabled'] == true;
+    final until = data['exhausted_until'] == null ? null : DateTime.parse(data['exhausted_until'] as String).toLocal();
+    final paused = until != null && until.isAfter(DateTime.now());
+    final used = data['last_used_at'] == null ? null : DateTime.parse(data['last_used_at'] as String).toLocal();
+    final (color, status) = !enabled
+        ? (Colors.grey, 'Turned off')
+        : paused
+            ? (Colors.orange, 'Paused until ${DateFormat.MMMd().add_jm().format(until)} · ${data['last_error'] ?? ''}')
+            : data['last_error'] != null
+                ? (Colors.red, '${data['last_error']}')
+                : (Colors.green, used == null ? 'Not used yet' : 'Working · last used ${ago(used)}');
+    final source = data['source'] == 'github' ? 'GitHub secret' : 'Added here';
+    final label = (data['label'] as String?)?.isNotEmpty == true ? data['label'] as String : 'Key $index';
+    return ListTile(
+      contentPadding: const EdgeInsets.only(left: 8),
+      dense: true,
+      leading: Switch(value: enabled, onChanged: onToggle),
+      title: Wrap(spacing: 6, crossAxisAlignment: WrapCrossAlignment.center, children: [
+        Text('$index. $label  ${data['hint']}'),
+        if (data['in_use'] == true && enabled)
+          const Chip(
+            label: Text('In use', style: TextStyle(fontSize: 11)),
+            avatar: Icon(Icons.bolt, size: 14),
+            visualDensity: VisualDensity.compact,
+          ),
+      ]),
+      subtitle: Text('$source · $status', style: TextStyle(color: color), maxLines: 2, overflow: TextOverflow.ellipsis),
+      trailing: PopupMenuButton<String>(
+        onSelected: (v) => v == 'first' ? onUseFirst?.call() : onDelete?.call(),
+        itemBuilder: (_) => [
+          PopupMenuItem(value: 'first', enabled: onUseFirst != null, child: const Text('Use this key first')),
+          PopupMenuItem(
+            value: 'delete',
+            enabled: onDelete != null,
+            child: Text(onDelete != null ? 'Remove' : 'Remove (delete it in GitHub secrets)'),
+          ),
+        ],
+      ),
     );
   }
 }

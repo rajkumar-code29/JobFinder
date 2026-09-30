@@ -35,7 +35,8 @@ skill not evidenced in the resume but closely related to skills it does show."""
 
 def score(job: dict, resume_text: str) -> dict:
     return llm.ask_json(PROMPT.format(title=job["title"], company=job["company"], location=job["location"],
-                                      jd=job["description"][:14000], resume=resume_text[:20000]), system=SYSTEM, temperature=0)
+                                      jd=job["description"][:14000], resume=resume_text[:20000]), system=SYSTEM, temperature=0,
+                        fast=True)  # flash-lite: high volume (parent + every re-score), and scores stay comparable
 
 
 def report_markdown(job: dict, rep: dict, tailored: dict | None = None) -> str:

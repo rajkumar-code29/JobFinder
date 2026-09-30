@@ -54,22 +54,64 @@ def _family(name: str) -> str | None:
 
 
 def _rank(name: str) -> tuple:
-    """Newest version first; stable before preview/experimental/dated variants."""
+    """Stable before preview/dated variants, then newest version first."""
     m = _MODEL_NAME.match(name)
     suffix = m.group(3) or ""
-    stable = suffix in ("", "latest")
-    return (float(m.group(1)), stable, suffix == "")
+    return (suffix in ("", "latest"), float(m.group(1)), suffix == "")
+
+
+_SPECIAL = re.compile(r"tts|image|audio|live|transcribe|robotics|native|embedding|computer", re.I)
+_discovered: dict[str, list[str]] | None = None
+FALLBACK_MODELS = {"flash": ["gemini-3.5-flash"], "flash-lite": ["gemini-3.5-flash-lite"]}
+
+
+def _discover(key) -> dict[str, list[str]]:
+    """Text models this key can call, per family, best first. One cheap list call per run."""
+    global _discovered
+    if _discovered is None:
+        found: dict[str, list[str]] = {"flash": [], "flash-lite": []}
+        try:
+            for m in _client(key).models.list():
+                name = (m.name or "").removeprefix("models/")
+                family, actions = _family(name), (m.supported_actions or [])
+                if family in found and not _SPECIAL.search(name) and (not actions or "generateContent" in actions):
+                    found[family].append(name)
+        except Exception as exc:
+            log.warning("could not list Gemini models (%s); using defaults", exc)
+        for family, names in found.items():
+            names.sort(key=_rank, reverse=True)
+            if not any(_rank(n)[0] for n in names):  # no stable model at all: keep previews
+                continue
+            found[family] = [n for n in names if _rank(n)[0]]
+        _discovered = found
+    return _discovered
+
+
+def _family_models(family: str, preferred: str, key) -> list[str]:
+    names = _discover(key)[family] or FALLBACK_MODELS[family]
+    first = [] if preferred == "auto" else [preferred]
+    if config.GEMINI_USE_ALL_MODELS:
+        rest = names          # each model has its own daily allowance: use them in turn
+    else:
+        rest = [] if first else names[:1]
+    return list(dict.fromkeys(first + rest))
 
 
 def _find_replacement(model: str, key) -> str | None:
     family = _family(model) or ("flash-lite" if "lite" in model else "flash")
-    available = []
-    for m in _client(key).models.list():
-        name = (m.name or "").removeprefix("models/")
-        actions = m.supported_actions or []
-        if _family(name) == family and name not in _retired and ("generateContent" in actions or not actions):
-            available.append(name)
-    return max(available, key=_rank) if available else None
+    candidates = [n for n in _discover(key)[family] if n not in _retired]
+    return candidates[0] if candidates else None
+
+
+def build_chain(tier: str, key) -> list[str]:
+    """Models to try, in order, for a kind of work.
+    light    – rating/scoring: flash-lite models (500/day each on the free tier)
+    search   – Google-grounded search: flash-lite, then flash
+    standard – tailoring, interview prep, cover letters: flash models (20/day each), then flash-lite"""
+    lite = _family_models("flash-lite", config.GEMINI_FAST_MODEL, key)
+    flash = _family_models("flash", config.GEMINI_MODEL, key)
+    chain = {"light": lite, "search": lite + flash, "standard": flash + lite}[tier]
+    return [m for m in dict.fromkeys(chain) if m not in _retired]
 
 
 def _resolve(model: str) -> str:
@@ -98,9 +140,16 @@ def _slot(key, model: str) -> str:
     return f"{key.fingerprint}:{model}"
 
 
+def _base_interval(model: str) -> float:
+    """Start at the free-tier pace for the family (flash 5/min, flash-lite 15/min) unless configured."""
+    if config.GEMINI_MIN_INTERVAL_SEC is not None:
+        return config.GEMINI_MIN_INTERVAL_SEC
+    return {"flash": 12.5, "flash-lite": 4.5}.get(_family(model) or "", 6.0)
+
+
 def _pace(key, model: str) -> None:
     slot = _slot(key, model)
-    wait = _interval.get(slot, config.GEMINI_MIN_INTERVAL_SEC) - (time.monotonic() - _last_call.get(slot, 0.0))
+    wait = _interval.get(slot, _base_interval(model)) - (time.monotonic() - _last_call.get(slot, 0.0))
     if wait > 0:
         time.sleep(wait)
     _last_call[slot] = time.monotonic()
@@ -109,7 +158,7 @@ def _pace(key, model: str) -> None:
 def _slow_down(key, model: str) -> None:
     """Free-tier per-minute limits differ per model; converge on the real one by doubling the gap (max 60s)."""
     slot = _slot(key, model)
-    _interval[slot] = min(60.0, max(_interval.get(slot, config.GEMINI_MIN_INTERVAL_SEC) * 2, 12.0))
+    _interval[slot] = min(60.0, max(_interval.get(slot, _base_interval(model)) * 2, 12.0))
 
 
 def _retry_delay(msg: str) -> float:
@@ -133,8 +182,8 @@ def _add_notice(note: str) -> None:
         log.warning(note)
 
 
-def _generate(prompt: str, *, system: str | None, chain: list[str], json_mode: bool, search: bool, temperature: float):
-    """Try each model in `chain` in order (main model, then the lighter fallback) across all keys."""
+def _generate(prompt: str, *, system: str | None, tier: str, json_mode: bool, search: bool, temperature: float):
+    """Try each model of the tier's chain in order, across all keys."""
     global calls_made
     if _pool is None:
         raise RuntimeError("llm.activate() was not called")
@@ -147,6 +196,7 @@ def _generate(prompt: str, *, system: str | None, chain: list[str], json_mode: b
     elif json_mode:
         cfg.response_mime_type = "application/json"
 
+    chain = build_chain(tier, _pool.keys[0])
     deadline = time.monotonic() + MAX_WAIT_PER_CALL
     last_error, server_errors = "no response", 0
     for position, configured in enumerate(chain):
@@ -232,20 +282,16 @@ def _parse_json(text: str):
     raise ValueError(f"Model did not return JSON: {text[:300]}")
 
 
-def _chain(fast: bool) -> list[str]:
-    """Bulk rating uses the light model only; everything else prefers the main model and falls back to the light one."""
-    chain = [config.GEMINI_FAST_MODEL] if fast else [config.GEMINI_MODEL, config.GEMINI_FAST_MODEL]
-    return list(dict.fromkeys(chain))
-
-
 def ask_json(prompt: str, *, system: str | None = None, fast: bool = False, temperature: float = 0.3):
-    resp = _generate(prompt, system=system, chain=_chain(fast), json_mode=True, search=False, temperature=temperature)
+    """fast=True for high-volume work (rating, scoring) on flash-lite; otherwise flash with flash-lite fallback."""
+    resp = _generate(prompt, system=system, tier="light" if fast else "standard", json_mode=True, search=False,
+                     temperature=temperature)
     return _parse_json(resp.text)
 
 
 def search_json(prompt: str, *, system: str | None = None) -> tuple[object, list[dict]]:
     """Grounded with Google Search. Returns (parsed_json, sources[{title, uri}])."""
-    resp = _generate(prompt, system=system, chain=_chain(False), json_mode=False, search=True, temperature=0.2)
+    resp = _generate(prompt, system=system, tier="search", json_mode=False, search=True, temperature=0.2)
     sources = []
     try:
         meta = resp.candidates[0].grounding_metadata

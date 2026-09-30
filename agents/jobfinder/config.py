@@ -31,10 +31,16 @@ if env("ADZUNA_APP_ID") and env("ADZUNA_APP_KEY"):
     SHARED_ADZUNA_KEYS.append((env("ADZUNA_APP_ID"), env("ADZUNA_APP_KEY")))
 SHARED_RAPIDAPI_KEYS = _split(env("RAPIDAPI_KEYS")) + _split(env("RAPIDAPI_KEY"))
 
-# If Google retires one of these, llm.py switches to the newest model of the same family automatically.
-GEMINI_MODEL = env("GEMINI_MODEL", "gemini-3.5-flash")
-GEMINI_FAST_MODEL = env("GEMINI_FAST_MODEL", "gemini-3.5-flash-lite")
-GEMINI_MIN_INTERVAL_SEC = float(env("GEMINI_MIN_INTERVAL_SEC", "6"))  # per key
+# Model routing (see llm.py): quality work (tailoring, interview prep, cover letters) uses a "flash" model,
+# high-volume work (relevance rating, ATS scoring, salary/job search) uses a "flash-lite" model.
+# "auto" = newest stable model of that family your key can use. Each model has its own free daily allowance,
+# so when one is used up the agents move on to the next model of the family (set GEMINI_USE_ALL_MODELS=false
+# to stick to one), and finally to flash-lite.
+GEMINI_MODEL = env("GEMINI_MODEL", "auto")
+GEMINI_FAST_MODEL = env("GEMINI_FAST_MODEL", "auto")
+GEMINI_USE_ALL_MODELS = (env("GEMINI_USE_ALL_MODELS", "true") or "true").lower() != "false"
+# Starting gap between calls per key+model; unset = matched to free-tier limits (flash 5/min, flash-lite 15/min).
+GEMINI_MIN_INTERVAL_SEC = float(env("GEMINI_MIN_INTERVAL_SEC")) if env("GEMINI_MIN_INTERVAL_SEC") else None
 
 NA = "NA"
 MAX_ATTEMPTS = 3

@@ -179,10 +179,14 @@ cd app && flutter run -d chrome --dart-define-from-file=env.json
 ```
 
 ## Free-tier budget notes
-- Each fully processed job ≈ 6–8 Gemini calls (score, salary, 1–2 tailor passes + re-scores, interview, cover letter).
+- Work is routed by model. **flash-lite** (free tier ~15/min, 500/day per model) does relevance rating, ATS scoring,
+  salary lookups and Google job search. **flash** (~5/min, 20/day per model) does tailoring, interview prep and cover
+  letters, about 3–4 calls per job.
+- `GEMINI_MODEL` / `GEMINI_FAST_MODEL` default to `auto` (newest stable model of each family). Every model version has
+  its own daily allowance, so when one is used up the agents move to the next version, then to flash-lite. With the
+  current free tier that's roughly 25–30 fully flash-quality jobs a day. Set `GEMINI_USE_ALL_MODELS=false` to use just one.
 - `max_jobs_per_run` (Settings, default 3) and each user's `llm_calls_per_run` cap usage. Jobs that don't
   fit in a run stay queued and resume from their last finished stage.
-- If you hit Gemini's daily limit, add a fallback key, lower `max_jobs_per_run`, or set `GEMINI_MODEL` to the flash-lite model.
 - Free-tier limits differ per model and change over time. On *too many requests* the agents widen the gap between
   calls (up to 60 s) and wait up to 4 min per request. If the main model's daily or free-tier limit is used up on every
   key, the rest of the run uses the light model, and the run log names Google's quota (e.g. `…PerDay…, limit 20`).

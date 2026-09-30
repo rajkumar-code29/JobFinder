@@ -7,16 +7,8 @@ import 'package:intl/intl.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 
 import '../api.dart';
+import '../countries.dart';
 import '../widgets/common.dart';
-
-const countryNames = {
-  'us': 'United States', 'gb': 'United Kingdom', 'in': 'India', 'ca': 'Canada', 'au': 'Australia',
-  'de': 'Germany', 'fr': 'France', 'nl': 'Netherlands', 'ie': 'Ireland', 'sg': 'Singapore',
-  'ae': 'UAE', 'nz': 'New Zealand', 'es': 'Spain', 'it': 'Italy', 'ch': 'Switzerland', 'at': 'Austria',
-  'be': 'Belgium', 'pl': 'Poland', 'se': 'Sweden', 'dk': 'Denmark', 'no': 'Norway', 'fi': 'Finland',
-  'pt': 'Portugal', 'br': 'Brazil', 'mx': 'Mexico', 'za': 'South Africa', 'jp': 'Japan',
-  'sa': 'Saudi Arabia', 'qa': 'Qatar', 'my': 'Malaysia', 'hk': 'Hong Kong',
-};
 
 const sourceInfo = {
   'adzuna': ('Adzuna', 'Aggregator, 19 countries (free key)'),
@@ -113,26 +105,26 @@ class _SettingsScreenState extends State<SettingsScreen> {
                   const _ParentDocs(),
                   const _ApiKeys(),
                   _Section(
-                    title: 'Countries',
-                    subtitle: 'Where the scouts look',
+                    title: 'Locations',
+                    subtitle: 'Countries, or any city/region you type (custom locations are searched via Google)',
                     child: Wrap(spacing: 6, runSpacing: 6, children: [
                       for (final c in _list('countries'))
                         InputChip(
-                          label: Text(countryNames[c] ?? c.toUpperCase()),
+                          avatar: Icon(countryNames.containsKey(c) ? Icons.flag_outlined : Icons.place_outlined, size: 18),
+                          label: Text(locationLabel(c)),
                           onDeleted: () => _set('countries', _list('countries')..remove(c)),
                         ),
                       ActionChip(
                         avatar: const Icon(Icons.add, size: 18),
-                        label: const Text('Add country'),
+                        label: const Text('Add location'),
                         onPressed: () async {
                           final picked = await showDialog<String>(
                             context: context,
-                            builder: (ctx) => SimpleDialog(title: const Text('Add country'), children: [
-                              for (final e in countryNames.entries.where((e) => !_list('countries').contains(e.key)))
-                                SimpleDialogOption(onPressed: () => Navigator.pop(ctx, e.key), child: Text(e.value)),
-                            ]),
+                            builder: (_) => LocationPicker(existing: _list('countries')),
                           );
-                          if (picked != null) _set('countries', [..._list('countries'), picked]);
+                          if (picked != null && !_list('countries').contains(picked)) {
+                            _set('countries', [..._list('countries'), picked]);
+                          }
                         },
                       ),
                     ]),
@@ -679,4 +671,87 @@ class _AddKeyDialogState extends State<_AddKeyDialog> {
           FilledButton(onPressed: _saving ? null : _save, child: const Text('Save key')),
         ],
       );
+}
+
+
+/// Search all countries, or add whatever was typed as a custom location (city, region…).
+class LocationPicker extends StatefulWidget {
+  const LocationPicker({super.key, required this.existing});
+  final List<String> existing;
+
+  @override
+  State<LocationPicker> createState() => LocationPickerState();
+}
+
+class LocationPickerState extends State<LocationPicker> {
+  String _query = '';
+
+  List<MapEntry<String, String>> get _matches {
+    final q = _query.trim().toLowerCase();
+    final all = countryNames.entries.where((e) => !widget.existing.contains(e.key));
+    if (q.isEmpty) return all.toList();
+    bool hit(MapEntry<String, String> e) =>
+        e.value.toLowerCase().contains(q) || e.key == q || (countryAliases[e.key] ?? const []).any((a) => a.startsWith(q));
+    final found = all.where(hit).toList()
+      // names starting with the query first
+      ..sort((a, b) => (b.value.toLowerCase().startsWith(q) ? 1 : 0) - (a.value.toLowerCase().startsWith(q) ? 1 : 0));
+    return found;
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final typed = _query.trim();
+    final matches = _matches;
+    final exact = typed.isNotEmpty && countryNames.containsKey(normalizeLocation(typed));
+    return AlertDialog(
+      title: const Text('Add location'),
+      contentPadding: const EdgeInsets.fromLTRB(16, 16, 16, 0),
+      content: SizedBox(
+        width: 420,
+        height: 440,
+        child: Column(children: [
+          TextField(
+            autofocus: true,
+            decoration: const InputDecoration(
+              prefixIcon: Icon(Icons.search),
+              hintText: 'Search a country, or type a city/region',
+              border: OutlineInputBorder(),
+              isDense: true,
+            ),
+            onChanged: (v) => setState(() => _query = v),
+            onSubmitted: (_) {
+              if (matches.length == 1) {
+                Navigator.pop(context, matches.first.key);
+              } else if (typed.isNotEmpty) {
+                Navigator.pop(context, normalizeLocation(typed));
+              }
+            },
+          ),
+          const SizedBox(height: 8),
+          if (typed.isNotEmpty && !exact)
+            ListTile(
+              leading: const Icon(Icons.add_location_alt_outlined),
+              title: Text('Add "$typed" as a custom location'),
+              subtitle: const Text('Searched with Google; Adzuna and JSearch only support whole countries'),
+              onTap: () => Navigator.pop(context, typed),
+            ),
+          Expanded(
+            child: matches.isEmpty
+                ? const Center(child: Text('No country matches'))
+                : ListView.builder(
+                    itemCount: matches.length,
+                    itemBuilder: (_, i) => ListTile(
+                      dense: true,
+                      leading: const Icon(Icons.flag_outlined),
+                      title: Text(matches[i].value),
+                      trailing: Text(matches[i].key.toUpperCase(), style: Theme.of(context).textTheme.labelSmall),
+                      onTap: () => Navigator.pop(context, matches[i].key),
+                    ),
+                  ),
+          ),
+        ]),
+      ),
+      actions: [TextButton(onPressed: () => Navigator.pop(context), child: const Text('Cancel'))],
+    );
+  }
 }

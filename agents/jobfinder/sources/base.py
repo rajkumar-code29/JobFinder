@@ -10,40 +10,70 @@ import requests
 from bs4 import BeautifulSoup
 
 from .. import config
+from .countries import ALIASES, COUNTRIES
 
 log = logging.getLogger("jobfinder")
 NA = config.NA
 
-COUNTRIES = {
-    "us": "United States", "gb": "United Kingdom", "in": "India", "ca": "Canada", "au": "Australia",
-    "de": "Germany", "fr": "France", "nl": "Netherlands", "ie": "Ireland", "sg": "Singapore",
-    "ae": "United Arab Emirates", "nz": "New Zealand", "es": "Spain", "it": "Italy", "ch": "Switzerland",
-    "at": "Austria", "be": "Belgium", "pl": "Poland", "se": "Sweden", "dk": "Denmark", "no": "Norway",
-    "fi": "Finland", "pt": "Portugal", "br": "Brazil", "mx": "Mexico", "za": "South Africa",
-    "jp": "Japan", "sa": "Saudi Arabia", "qa": "Qatar", "my": "Malaysia", "hk": "Hong Kong",
-}
-ALIASES = {"gb": ["uk", "england", "london", "scotland"], "us": ["usa", "u.s."], "ae": ["uae", "dubai", "abu dhabi"],
-           "in": ["bengaluru", "bangalore", "hyderabad", "pune", "chennai", "mumbai", "delhi", "gurgaon", "noida"]}
 CURRENCY = {"us": "USD", "gb": "GBP", "in": "INR", "ca": "CAD", "au": "AUD", "de": "EUR", "fr": "EUR", "nl": "EUR",
             "ie": "EUR", "es": "EUR", "it": "EUR", "at": "EUR", "be": "EUR", "sg": "SGD", "nz": "NZD", "ch": "CHF",
             "pl": "PLN", "br": "BRL", "mx": "MXN", "za": "ZAR"}
 
 
-def country_name(code: str) -> str:
-    return COUNTRIES.get(code.lower(), code.upper())
+# Place names that are also parts of other places ("New Jersey", "Georgia, US") – never treat these
+# as proof that a job is in a different country.
+_AMBIGUOUS = {"jersey", "georgia", "guernsey", "jordan", "chad", "niger", "turkey", "victoria", "washington"}
 
 
-def location_matches(location: str, countries: list[str], remote_ok: bool) -> bool:
-    loc = (location or "").lower()
+def normalize_location(value: str) -> str:
+    """ISO codes, country names and known aliases become a lower-case ISO code (e.g. "UK" -> "gb").
+    Anything else is a custom location (a city, region…) and is kept as typed."""
+    v = (value or "").strip()
+    low = v.lower()
+    if low in COUNTRIES:
+        return low
+    for code, name in COUNTRIES.items():
+        if name.lower() == low:
+            return code
+    for code, words in ALIASES.items():
+        if low in words:
+            return code
+    return v
+
+
+def is_country(value: str) -> bool:
+    return value in COUNTRIES
+
+
+def country_name(value: str) -> str:
+    """Country name for an ISO code; custom locations are returned as typed."""
+    return COUNTRIES.get(value, value)
+
+
+def _mentions(text: str, word: str) -> bool:
+    return re.search(rf"(?<![a-z]){re.escape(word)}(?![a-z])", text) is not None
+
+
+def location_matches(location: str, wanted: list[str], remote_ok: bool) -> bool | None:
+    """True: in a wanted place (or acceptable remote). False: clearly in some other country.
+    None: can't tell (e.g. only a city we don't know) – the Scout's AI rating decides."""
+    raw = location or ""
+    loc = raw.lower()
     if not loc or loc == "na":
+        return None
+    if remote_ok and any(w in loc for w in ("remote", "anywhere", "worldwide")):
         return True
-    if remote_ok and ("remote" in loc or "anywhere" in loc or "worldwide" in loc):
-        return True
-    for code in countries:
-        words = [country_name(code).lower(), *ALIASES.get(code, [])]
-        if any(w in loc for w in words) or re.search(rf"\b{re.escape(code)}\b", loc):
+    for w in wanted:
+        words = [country_name(w).lower(), *ALIASES.get(w, [])]
+        if any(_mentions(loc, x) for x in words):
             return True
-    return False
+        if is_country(w) and re.search(rf"\b{w.upper()}\b", raw):  # "Austin, TX, US"
+            return True
+    for code, name in COUNTRIES.items():
+        for x in (name.lower(), *ALIASES.get(code, [])):
+            if x not in _AMBIGUOUS and _mentions(loc, x):
+                return False
+    return None
 
 
 @dataclass

@@ -7,17 +7,19 @@ from datetime import datetime, timezone
 
 from .. import db, llm
 from ..sources import aggregators, boards, google_search
-from ..sources.base import NA, RawJob, fetch_page_details, format_salary, location_matches
+from ..sources.base import (NA, RawJob, country_name, fetch_page_details, format_salary, location_matches,
+                            normalize_location)
 
 log = logging.getLogger("jobfinder")
 
 RELEVANCE_PROMPT = """Candidate profile:
 {profile}
 
-Target roles: {roles}. Preferred countries: {countries}. Remote acceptable: {remote}.
+Target roles: {roles}. Preferred locations: {countries}. Remote acceptable: {remote}.
 
 For each job below, rate 0-100 how relevant it is to THIS candidate's resume (skills, seniority, domain, role type).
 Be strict: unrelated roles, very different seniority, or a different profession score below 40.
+A job clearly located outside the preferred locations (and not remote-friendly when remote is acceptable) scores below 30.
 Return ONLY JSON: [{{"i": index, "score": int, "reason": "one short sentence"}}] for every job.
 
 JOBS:
@@ -34,7 +36,7 @@ def _hour() -> int:
 
 
 def collect(run: db.PipelineRun, settings: dict, roles: list[str], force_all: bool, pools: dict) -> list[RawJob]:
-    countries = [c.lower() for c in settings["countries"]] or ["us"]
+    countries = [normalize_location(c) for c in settings["countries"]] or ["us"]
     src = settings.get("sources") or {}
     hour = _hour()
     plan = [
@@ -69,7 +71,7 @@ def collect(run: db.PipelineRun, settings: dict, roles: list[str], force_all: bo
 
 def prefilter(jobs: list[RawJob], settings: dict, profile: dict, roles: list[str]) -> list[RawJob]:
     """Cheap keyword gate before spending LLM calls."""
-    countries = [c.lower() for c in settings["countries"]]
+    countries = [normalize_location(c) for c in settings["countries"]]
     excludes = [x.lower() for x in settings.get("exclude_keywords") or []]
     role_words = {w for r in roles for w in r.lower().split() if len(w) > 2 and w not in {"senior", "junior", "lead", "engineer", "developer", "and"}}
     skills = [s.lower() for s in (profile.get("skills") or []) if len(s) > 1][:60]
@@ -79,7 +81,7 @@ def prefilter(jobs: list[RawJob], settings: dict, profile: dict, roles: list[str
         title = j.title.lower()
         if any(x in title for x in excludes):
             continue
-        if j.country not in countries and not location_matches(j.location, countries, settings["remote_ok"]):
+        if j.country not in countries and location_matches(j.location, countries, settings["remote_ok"]) is False:
             continue
         text = f"{title}\n{j.description.lower()[:6000]}"
         skill_hits = sum(1 for s in skills if s in text)
@@ -96,7 +98,8 @@ def rate(jobs: list[RawJob], settings: dict, profile_brief: str, roles: list[str
             f"[{i}] {j.title} @ {j.company} ({j.location})\n{j.description[:900]}" for i, j in enumerate(batch)
         )
         res = llm.ask_json(RELEVANCE_PROMPT.format(
-            profile=profile_brief[:6000], roles=", ".join(roles), countries=", ".join(settings["countries"]),
+            profile=profile_brief[:6000], roles=", ".join(roles),
+            countries=", ".join(country_name(normalize_location(c)) for c in settings["countries"]),
             remote=settings["remote_ok"], jobs=listing), fast=True, temperature=0)
         scores = {int(r["i"]): r for r in res if isinstance(r, dict) and "i" in r} if isinstance(res, list) else {}
         for i, j in enumerate(batch):

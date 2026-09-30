@@ -4,6 +4,7 @@ import 'package:go_router/go_router.dart';
 import 'package:url_launcher/url_launcher.dart';
 
 import '../api.dart';
+import '../countries.dart';
 import '../models.dart';
 import '../widgets/common.dart';
 
@@ -77,7 +78,7 @@ class _Body extends StatelessWidget {
             child: Padding(
               padding: const EdgeInsets.symmetric(vertical: 4),
               child: Column(children: [
-                _Info(Icons.place_outlined, 'Location', '${job.location}${isNa(job.country) ? '' : ' (${job.country.toUpperCase()})'}'),
+                _Info(Icons.place_outlined, 'Location', '${job.location}${isNa(job.country) ? '' : ' (${locationLabel(job.country)})'}'),
                 _Info(Icons.payments_outlined, 'Salary', job.salaryText,
                     sub: isNa(job.salarySource) ? null : job.salarySource.startsWith('estimate') ? 'Estimated (${job.salarySource.split(':').last})' : 'From job posting'),
                 _Info(Icons.home_work_outlined, 'Remote', job.remote),

@@ -10,7 +10,7 @@ import requests
 
 from .. import config
 from ..keys import ALL_SCOPES, KeyPool, NoKeyAvailable, first_of_next_month, utcnow
-from .base import CURRENCY, NA, RawJob, country_name, format_salary, get_json, html_to_text
+from .base import CURRENCY, NA, RawJob, country_name, format_salary, get_json, html_to_text, is_country
 
 log = logging.getLogger("jobfinder")
 
@@ -110,6 +110,8 @@ def jsearch(roles: list[str], countries: list[str], pool: KeyPool) -> list[RawJo
     jobs = []
     query_roles = " OR ".join(roles[:3])
     for cc in countries:
+        if not is_country(cc):  # JSearch needs an ISO country; custom locations are covered by Google search
+            continue
         try:
             data = _pooled_get(pool, lambda k, cc=cc: (
                 "https://jsearch.p.rapidapi.com/search",

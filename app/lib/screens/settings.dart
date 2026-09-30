@@ -7,6 +7,7 @@ import 'package:intl/intl.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 
 import '../api.dart';
+import '../boards.dart';
 import '../countries.dart';
 import '../widgets/common.dart';
 
@@ -145,8 +146,9 @@ class _SettingsScreenState extends State<SettingsScreen> {
                   ),
                   _Section(
                     title: 'Job boards & career pages',
-                    subtitle: 'Greenhouse, Lever, Ashby and Workable links use their public APIs. '
-                        'Any other link (LinkedIn, Indeed, Naukri, a careers page) is searched via Google.',
+                    subtitle: 'Company boards on Greenhouse, Lever, Ashby, Workable, Workday or SmartRecruiters are read '
+                        'directly (every open job, full descriptions). Any other link (LinkedIn, Indeed, a careers page) '
+                        'is searched via Google every 4 hours; only its domain is used, not search filters in the link.',
                     child: _BoardsEditor(
                       boards: ((s['job_boards'] as List?) ?? []).whereType<Map>().map((m) => Map<String, dynamic>.from(m)).toList(),
                       onChanged: (v) => _set('job_boards', v),
@@ -278,15 +280,6 @@ class _BoardsEditor extends StatefulWidget {
 class _BoardsEditorState extends State<_BoardsEditor> {
   final _ctrl = TextEditingController();
 
-  static String kind(String url) {
-    final u = url.toLowerCase();
-    if (u.contains('greenhouse.io')) return 'Greenhouse API';
-    if (u.contains('lever.co')) return 'Lever API';
-    if (u.contains('ashbyhq.com')) return 'Ashby API';
-    if (u.contains('workable.com')) return 'Workable API';
-    return 'Google search';
-  }
-
   void _add() {
     final url = _ctrl.text.trim();
     if (url.isEmpty) return;
@@ -308,7 +301,7 @@ class _BoardsEditorState extends State<_BoardsEditor> {
               },
             ),
             title: Text('${b['url']}', maxLines: 1, overflow: TextOverflow.ellipsis),
-            subtitle: Text(kind('${b['url']}')),
+            subtitle: _BoardKindText(kind: boardKind('${b['url']}')),
             trailing: IconButton(
               icon: const Icon(Icons.delete_outline),
               onPressed: () => widget.onChanged([...widget.boards]..removeAt(i)),
@@ -320,12 +313,35 @@ class _BoardsEditorState extends State<_BoardsEditor> {
           keyboardType: TextInputType.url,
           decoration: InputDecoration(
             isDense: true,
-            hintText: 'https://boards.greenhouse.io/company',
+            hintText: 'e.g. https://jobs.lever.co/company',
             border: const OutlineInputBorder(),
             suffixIcon: IconButton(icon: const Icon(Icons.add), onPressed: _add),
           ),
         ),
       ]);
+}
+
+class _BoardKindText extends StatelessWidget {
+  const _BoardKindText({required this.kind});
+  final BoardKind kind;
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    return Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+      Row(children: [
+        Icon(kind.direct ? Icons.bolt : Icons.travel_explore, size: 14,
+            color: kind.direct ? Colors.green : theme.colorScheme.outline),
+        const SizedBox(width: 4),
+        Text(kind.label),
+      ]),
+      if (kind.warning != null)
+        Padding(
+          padding: const EdgeInsets.only(top: 2),
+          child: Text(kind.warning!, style: theme.textTheme.bodySmall?.copyWith(color: Colors.orange.shade800)),
+        ),
+    ]);
+  }
 }
 
 class _SliderRow extends StatelessWidget {

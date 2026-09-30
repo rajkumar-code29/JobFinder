@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import copy
 import html
 import json
 import logging
@@ -96,6 +97,12 @@ class RawJob:
     salary_period: str = NA
     salary_text: str = NA
     extra: dict = field(default_factory=dict)
+
+    def clone(self) -> "RawJob":
+        """Independent copy (own `extra` dict) – cached feeds hand one to each user."""
+        c = copy.copy(self)
+        c.extra = dict(self.extra)
+        return c
 
     def as_row(self) -> dict:
         row = {k: v for k, v in self.__dict__.items() if k not in ("extra", "salary_period")}

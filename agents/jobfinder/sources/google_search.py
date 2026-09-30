@@ -50,15 +50,49 @@ def search_roles(roles: list[str], countries: list[str]) -> list[RawJob]:
     return jobs
 
 
+# Where the individual job pages live on big boards, so `site:` hits postings rather than search/list pages.
+# `site:` also matches regional subdomains (in.linkedin.com, uk.indeed.com…) once the "www." is dropped.
+BOARD_JOB_PATHS = {
+    "linkedin.com": "linkedin.com/jobs/view",
+    "glassdoor.com": "glassdoor.com/job-listing",
+    "glassdoor.co.uk": "glassdoor.co.uk/job-listing",
+    "glassdoor.co.in": "glassdoor.co.in/job-listing",
+    "naukri.com": "naukri.com/job-listings",
+    "indeed.com": "indeed.com",
+    "wellfound.com": "wellfound.com/jobs",
+    "ziprecruiter.com": "ziprecruiter.com/c",
+    "seek.com.au": "seek.com.au/job",
+    "reed.co.uk": "reed.co.uk/jobs",
+    "totaljobs.com": "totaljobs.com/job",
+    "stepstone.de": "stepstone.de/stellenangebote",
+    "dice.com": "dice.com/job-detail",
+    "monster.com": "monster.com/job-openings",
+    "bayt.com": "bayt.com/en/job",
+    "foundit.in": "foundit.in/job",
+}
+
+
+def site_target(url: str) -> str:
+    """The `site:` filter for a board URL: known boards map to their job-page path; for anything else the
+    domain (without www.) plus up to two path segments, e.g. careers.acme.com/jobs. Query strings are ignored."""
+    u = urlparse(url if "://" in url else f"https://{url}")
+    host = u.netloc.lower().split(":")[0].removeprefix("www.")
+    for domain, target in BOARD_JOB_PATHS.items():
+        if host == domain or host.endswith("." + domain):
+            return target
+    segments = [p for p in u.path.split("/") if p][:2]
+    return "/".join([host, *segments])
+
+
 def search_site(url: str, roles: list[str], countries: list[str]) -> list[RawJob]:
-    host = urlparse(url if "://" in url else f"https://{url}").netloc
+    target = site_target(url)
     where = " OR ".join(country_name(c) for c in countries[:4])
-    query = f"site:{host} ({' OR '.join(repr(r) for r in roles[:3])}) ({where})"
+    query = f"site:{target} ({' OR '.join(repr(r) for r in roles[:3])}) ({where})"
     try:
         items, _ = llm.search_json(PROMPT.format(query=query))
-        return _to_jobs(items, host, countries[0] if len(countries) == 1 else NA)
+        return _to_jobs(items, target, countries[0] if len(countries) == 1 else NA)
     except llm.StopUser:
         raise
     except Exception as exc:
-        log.warning("Google site search %s failed: %s", host, exc)
+        log.warning("Google site search %s failed: %s", target, exc)
         return []

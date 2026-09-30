@@ -1,21 +1,36 @@
-"""Company career boards added by URL in Settings. Public ATS APIs are used when the URL is recognised;
-anything else (LinkedIn, Indeed, a custom careers page…) is searched through Gemini + Google Search."""
+"""Company career boards added by URL in Settings. Public ATS feeds are read directly when the URL is
+recognised (Greenhouse, Lever, Ashby, Workable, Workday, SmartRecruiters); anything else (LinkedIn, Indeed,
+a custom careers page…) is searched through Gemini + Google Search instead."""
 from __future__ import annotations
 
-import copy
 import logging
 import re
 from urllib.parse import urlparse
 
+import requests
+
+from .. import config
 from .base import NA, RawJob, format_salary, get_json, html_to_text
 
 log = logging.getLogger("jobfinder")
+
+
+_SAFE = re.compile(r"[^A-Za-z0-9_.-]")
+_LOCALE = re.compile(r"^[a-z]{2}(-[A-Za-z]{2})?$")  # Workday URLs often start with /en-US/
 
 
 def detect(url: str) -> tuple[str, str] | None:
     """Return (ats, slug) for known ATS URLs, else None."""
     u = urlparse(url if "://" in url else f"https://{url}")
     host, parts = u.netloc.lower(), [p for p in u.path.split("/") if p]
+    if host.endswith((".myworkdayjobs.com", ".myworkdaysite.com")):
+        # https://<tenant>.wd5.myworkdayjobs.com/[en-US/]<site>/…
+        parts = [p for p in parts if not _LOCALE.match(p)]
+        if not parts:
+            return None
+        return "workday", "/".join(_SAFE.sub("", x) for x in (host, host.split(".")[0], parts[0]))
+    if host in ("jobs.smartrecruiters.com", "careers.smartrecruiters.com") and parts:
+        return "smartrecruiters", _SAFE.sub("", parts[0])
     if "greenhouse.io" in host:
         if "for" in (q := dict(x.split("=", 1) for x in u.query.split("&") if "=" in x)):
             return "greenhouse", q["for"]
@@ -96,21 +111,118 @@ def workable(slug: str) -> list[RawJob]:
     ) for j in data.get("jobs", [])]
 
 
-FETCHERS = {"greenhouse": greenhouse, "lever": lever, "ashby": ashby, "workable": workable}
+def workday(slug: str, roles: list[str]) -> list[RawJob]:
+    """Workday's career-site JSON API. The list only has titles/locations, so each job carries a `hydrate`
+    callable that the Scout runs for *new* jobs only (full description, country, employment type)."""
+    host, tenant, site = slug.split("/")
+    base = f"https://{host}/wday/cxs/{tenant}/{site}"
+    headers = {"User-Agent": config.USER_AGENT, "Accept": "application/json", "Content-Type": "application/json"}
+    seen: dict[str, dict] = {}
+    for role in (roles or [""])[:3]:
+        for offset in (0, 20):  # Workday caps pages at 20
+            r = requests.post(f"{base}/jobs", json={"appliedFacets": {}, "limit": 20, "offset": offset, "searchText": role},
+                              headers=headers, timeout=config.HTTP_TIMEOUT)
+            r.raise_for_status()
+            postings = r.json().get("jobPostings") or []
+            for p in postings:
+                if p.get("externalPath"):
+                    seen.setdefault(p["externalPath"], p)
+            if len(postings) < 20:
+                break
+    company = tenant.replace("-", " ").title()
 
+    def hydrate(path: str):
+        def run() -> dict:
+            info = requests.get(f"{base}{path}", headers=headers, timeout=config.HTTP_TIMEOUT).json().get("jobPostingInfo") or {}
+            country = (info.get("country") or {}).get("descriptor")
+            loc = ", ".join(x for x in [info.get("location"), country] if x and x not in (info.get("location") or ""))
+            return {"description": html_to_text(info.get("jobDescription")), "location": loc or info.get("location"),
+                    "employment_type": info.get("timeType"), "apply_url": info.get("externalUrl"),
+                    "remote": info.get("remoteType"), "posted_at": info.get("startDate")}
+        return run
+
+    jobs = []
+    for path, p in seen.items():
+        job_url = f"https://{host}/{site}{path}"
+        job = RawJob(source="workday", external_id=f"{tenant}:{path.rsplit('_', 1)[-1]}", title=p.get("title") or NA,
+                     company=company, location=p.get("locationsText") or NA, url=job_url, apply_url=job_url,
+                     posted_at=p.get("postedOn") or NA)
+        job.extra["hydrate"] = hydrate(path)
+        jobs.append(job)
+    return jobs
+
+
+def smartrecruiters(slug: str, roles: list[str]) -> list[RawJob]:
+    """SmartRecruiters public Posting API (search by role, full description via `hydrate`)."""
+    base = f"https://api.smartrecruiters.com/v1/companies/{slug}/postings"
+    seen: dict[str, dict] = {}
+    for role in (roles or [""])[:3]:
+        data = get_json(base, params={"q": role, "limit": 100})
+        for p in data.get("content") or []:
+            seen.setdefault(p["id"], p)
+
+    def hydrate(pid: str):
+        def run() -> dict:
+            d = get_json(f"{base}/{pid}")
+            sections = (d.get("jobAd") or {}).get("sections") or {}
+            text = "\n\n".join(
+                f"{sec.get('title') or ''}\n{html_to_text(sec.get('text'))}"
+                for key in ("jobDescription", "qualifications", "additionalInformation", "companyDescription")
+                if (sec := sections.get(key)) and sec.get("text"))
+            return {"description": text or NA, "apply_url": d.get("applyUrl"), "url": d.get("postingUrl")}
+        return run
+
+    jobs = []
+    for pid, p in seen.items():
+        loc = p.get("location") or {}
+        job = RawJob(
+            source="smartrecruiters", external_id=f"{slug}:{pid}", title=p.get("name") or NA,
+            company=(p.get("company") or {}).get("name") or slug,
+            location=loc.get("fullLocation") or ", ".join(x for x in [loc.get("city"), loc.get("country")] if x) or NA,
+            country=(loc.get("country") or NA).lower() if loc.get("country") else NA,
+            url=f"https://jobs.smartrecruiters.com/{slug}/{pid}", apply_url=f"https://jobs.smartrecruiters.com/{slug}/{pid}",
+            remote="yes" if loc.get("remote") else ("hybrid" if loc.get("hybrid") else "no"),
+            employment_type=(p.get("typeOfEmployment") or {}).get("label") or NA,
+            posted_at=p.get("releasedDate") or NA,
+        )
+        job.extra["hydrate"] = hydrate(pid)
+        jobs.append(job)
+    return jobs
+
+
+# Feeds that return every open job at the company ignore the roles argument.
+FETCHERS = {
+    "greenhouse": lambda slug, roles: greenhouse(slug),
+    "lever": lambda slug, roles: lever(slug),
+    "ashby": lambda slug, roles: ashby(slug),
+    "workable": lambda slug, roles: workable(slug),
+    "workday": workday,
+    "smartrecruiters": smartrecruiters,
+}
 
 _board_cache: dict[str, list[RawJob]] = {}
 
 
-def fetch_board(url: str) -> tuple[list[RawJob], bool]:
+def fetch_board(url: str, roles: list[str]) -> tuple[list[RawJob], bool]:
     """Returns (jobs, handled). handled=False means the URL needs the Google-search fallback.
-    Results are cached per run, so users following the same company share one API call."""
+    Results are cached per run, so users following the same company share one fetch."""
     hit = detect(url)
     if not hit:
         return [], False
     ats, slug = hit
-    slug = re.sub(r"[^A-Za-z0-9_.-]", "", slug)
-    cache_key = f"{ats}:{slug}"
+    if ats not in ("workday", "smartrecruiters"):
+        slug = _SAFE.sub("", slug)
+    cache_key = f"{ats}:{slug}:" + ("|".join(sorted(r.lower() for r in roles[:3])) if ats in ("workday", "smartrecruiters") else "")
     if cache_key not in _board_cache:
-        _board_cache[cache_key] = FETCHERS[ats](slug)
-    return [copy.copy(j) for j in _board_cache[cache_key]], True
+        _board_cache[cache_key] = FETCHERS[ats](slug, roles)
+    return [j.clone() for j in _board_cache[cache_key]], True
+
+
+def hydrate(job: RawJob) -> None:
+    """Fill in details for feeds whose list endpoint is thin (Workday, SmartRecruiters)."""
+    fn = job.extra.pop("hydrate", None)
+    if not fn:
+        return
+    for key, value in (fn() or {}).items():
+        if value:
+            setattr(job, key, value)

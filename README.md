@@ -35,8 +35,17 @@ Every captured job gets its own folder `jobs/<job_id>/`:
 | Remotive API | free, no key | every 6h (their limit) |
 | JSearch (Google for Jobs: LinkedIn/Indeed/Glassdoor…) | free 200 req/month | once a day (06 UTC) |
 | Gemini + Google Search | free | every 4h |
-| Your board links: Greenhouse / Lever / Ashby / Workable | free public APIs | hourly |
+| Your board links: Greenhouse / Lever / Ashby / Workable / Workday / SmartRecruiters | free public feeds | hourly |
 | Any other link (LinkedIn, Indeed, Naukri, careers page) | Gemini `site:` search | every 4h |
+
+### What to paste in *Job boards & career pages*
+| Link | How it's read |
+|---|---|
+| `boards.greenhouse.io/<company>`, `jobs.lever.co/<company>`, `jobs.ashbyhq.com/<company>`, `apply.workable.com/<company>` | Company's public feed: every open job, full descriptions |
+| `<company>.wd5.myworkdayjobs.com/en-US/<SiteName>` | Workday feed, searched by your roles; full details loaded for new jobs only (40 per run) |
+| `jobs.smartrecruiters.com/<CompanyId>` | SmartRecruiters feed, searched by your roles |
+| `linkedin.com`, `indeed.com`, `naukri.com`, `glassdoor.com`, … | Not visited. Google search limited to the site's job pages (`site:linkedin.com/jobs/view …`), max 10 results every 4h, short descriptions. Only the domain matters; search filters in the link are ignored. JSearch (RapidAPI key) covers LinkedIn/Indeed/Glassdoor better. |
+| Any other careers page | Google `site:` search on that domain/path. Tip: if its Apply buttons go to one of the platforms above, paste that link instead. |
 
 ---
 

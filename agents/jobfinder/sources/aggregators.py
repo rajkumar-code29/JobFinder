@@ -1,7 +1,6 @@
 """Free job-search APIs. Each function returns list[RawJob] and never raises for a single bad query."""
 from __future__ import annotations
 
-import copy
 import logging
 import time
 from datetime import timedelta
@@ -21,7 +20,7 @@ def _cached(name: str, fetch) -> list[RawJob]:
     """Keyless feeds are the same for every user: fetch once per run, hand each user a copy."""
     if name not in _feed_cache:
         _feed_cache[name] = fetch()
-    return [copy.copy(j) for j in _feed_cache[name]]
+    return [j.clone() for j in _feed_cache[name]]
 
 
 def _pooled_get(pool: KeyPool, build) -> dict | None:

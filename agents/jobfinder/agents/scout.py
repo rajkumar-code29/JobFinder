@@ -61,7 +61,7 @@ def collect(run: db.PipelineRun, settings: dict, roles: list[str], force_all: bo
         if not url or not board.get("enabled", True):
             continue
         with run.agent("scout", message=f"Scanning board {url}") as task:
-            found, handled = boards.fetch_board(url)
+            found, handled = boards.fetch_board(url, roles)
             if not handled and (hour % 4 == 0 or force_all):
                 found = google_search.search_site(url, roles, countries)
             raw += found
@@ -132,6 +132,7 @@ def run(run: db.PipelineRun, settings: dict, profile: dict, profile_brief: str, 
             fps.add(fp)
             fresh.append(j)
 
+    fresh = _hydrate_new(run, fresh)
     candidates = prefilter(fresh, settings, profile, roles)
     run.note(f"{len(fresh)} new, {len(candidates)} pass keyword filter")
     if not candidates:
@@ -159,6 +160,30 @@ def run(run: db.PipelineRun, settings: dict, profile: dict, profile_brief: str, 
             log.warning("insert failed for %s: %s", job.title, exc)
     run.matched += stored
     return stored
+
+
+MAX_HYDRATE_PER_RUN = 40
+
+
+def _hydrate_new(run: db.PipelineRun, jobs: list[RawJob]) -> list[RawJob]:
+    """Workday/SmartRecruiters lists are title-only: fetch full details for new jobs only (capped per run).
+    Jobs beyond the cap are skipped this run and picked up by a later one."""
+    thin = [j for j in jobs if "hydrate" in j.extra]
+    if not thin:
+        return jobs
+    ready, done, failed = [j for j in jobs if "hydrate" not in j.extra], 0, 0
+    for j in thin[:MAX_HYDRATE_PER_RUN]:
+        try:
+            boards.hydrate(j)
+            ready.append(j)
+            done += 1
+        except Exception as exc:
+            failed += 1
+            log.warning("details for %s failed: %s", j.title, exc)
+    run.note(f"Loaded details for {done} new Workday/SmartRecruiters jobs"
+             + (f", {len(thin) - MAX_HYDRATE_PER_RUN} left for the next run" if len(thin) > MAX_HYDRATE_PER_RUN else "")
+             + (f", {failed} failed" if failed else ""))
+    return ready
 
 
 def _enrich(job: RawJob) -> None:

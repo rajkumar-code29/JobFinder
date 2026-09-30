@@ -5,9 +5,11 @@ import 'package:flutter/material.dart';
 import 'package:go_router/go_router.dart';
 import 'package:intl/intl.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
+import 'package:url_launcher/url_launcher.dart';
 
 import '../api.dart';
 import '../boards.dart';
+import '../key_guides.dart';
 import '../countries.dart';
 import '../widgets/common.dart';
 
@@ -77,6 +79,9 @@ class _SettingsScreenState extends State<SettingsScreen> {
     final s = _s;
     return Scaffold(
       appBar: AppBar(title: const Text('Settings'), actions: [
+        IconButton(tooltip: 'How it works', icon: const Icon(Icons.help_outline), onPressed: () => context.push('/help')),
+        if (Api.isAdmin)
+          IconButton(tooltip: 'Users (admin)', icon: const Icon(Icons.group_outlined), onPressed: () => context.push('/admin/users')),
         IconButton(
           tooltip: 'Change password',
           icon: const Icon(Icons.password),
@@ -612,10 +617,33 @@ class _AddKeyDialogState extends State<_AddKeyDialog> {
   final _appId = TextEditingController();
   final _key = TextEditingController();
   bool _saving = false;
+  bool _testing = false;
   String? _error;
+  KeyTestResult? _test;
+
+  bool get _missing => _key.text.trim().isEmpty || (_provider == 'adzuna' && _appId.text.trim().isEmpty);
+
+  Future<void> _runTest() async {
+    if (_missing) {
+      setState(() => _error = _provider == 'adzuna' ? 'Enter both the app id and the app key' : 'Paste the key first');
+      return;
+    }
+    setState(() {
+      _testing = true;
+      _error = null;
+      _test = null;
+    });
+    final result = await testKey(_provider, _key.text, appId: _appId.text);
+    if (mounted) {
+      setState(() {
+        _testing = false;
+        _test = result;
+      });
+    }
+  }
 
   Future<void> _save() async {
-    if (_key.text.trim().isEmpty || (_provider == 'adzuna' && _appId.text.trim().isEmpty)) {
+    if (_missing) {
       setState(() => _error = _provider == 'adzuna' ? 'Adzuna needs both the app id and the app key' : 'Paste the key');
       return;
     }
@@ -645,10 +673,14 @@ class _AddKeyDialogState extends State<_AddKeyDialog> {
   }
 
   @override
-  Widget build(BuildContext context) => AlertDialog(
-        title: const Text('Add API key'),
-        content: SizedBox(
-          width: 420,
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final guide = keyGuides[_provider];
+    return AlertDialog(
+      title: const Text('Add API key'),
+      content: SizedBox(
+        width: 460,
+        child: SingleChildScrollView(
           child: Column(mainAxisSize: MainAxisSize.min, crossAxisAlignment: CrossAxisAlignment.stretch, children: [
             DropdownButtonFormField<String>(
               initialValue: _provider,
@@ -656,10 +688,45 @@ class _AddKeyDialogState extends State<_AddKeyDialog> {
               items: [
                 for (final e in providerInfo.entries) DropdownMenuItem(value: e.key, child: Text(e.value.$1)),
               ],
-              onChanged: (v) => setState(() => _provider = v ?? 'gemini'),
+              onChanged: (v) => setState(() {
+                _provider = v ?? 'gemini';
+                _test = null;
+              }),
             ),
-            const SizedBox(height: 4),
-            Text('Get one at ${providerInfo[_provider]!.$2}', style: Theme.of(context).textTheme.bodySmall),
+            if (guide != null) ...[
+              const SizedBox(height: 10),
+              Container(
+                padding: const EdgeInsets.all(12),
+                decoration: BoxDecoration(
+                  color: theme.colorScheme.surfaceContainerHighest,
+                  borderRadius: BorderRadius.circular(10),
+                ),
+                child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+                  Text('How to get this key', style: theme.textTheme.labelLarge),
+                  const SizedBox(height: 6),
+                  for (final (i, step) in guide.steps.indexed)
+                    Padding(
+                      padding: const EdgeInsets.only(bottom: 4),
+                      child: Row(crossAxisAlignment: CrossAxisAlignment.start, children: [
+                        CircleAvatar(radius: 9, child: Text('${i + 1}', style: const TextStyle(fontSize: 10))),
+                        const SizedBox(width: 8),
+                        Expanded(child: Text(step, style: theme.textTheme.bodySmall)),
+                      ]),
+                    ),
+                  if (guide.note != null) ...[
+                    const SizedBox(height: 4),
+                    Text(guide.note!, style: theme.textTheme.bodySmall?.copyWith(fontStyle: FontStyle.italic)),
+                  ],
+                  const SizedBox(height: 4),
+                  TextButton.icon(
+                    style: TextButton.styleFrom(padding: EdgeInsets.zero, visualDensity: VisualDensity.compact),
+                    onPressed: () => launchUrl(Uri.parse(guide.url), mode: LaunchMode.externalApplication),
+                    icon: const Icon(Icons.open_in_new, size: 16),
+                    label: Text(Uri.parse(guide.url).host),
+                  ),
+                ]),
+              ),
+            ],
             const SizedBox(height: 12),
             TextField(
               controller: _label,
@@ -667,7 +734,11 @@ class _AddKeyDialogState extends State<_AddKeyDialog> {
             ),
             if (_provider == 'adzuna') ...[
               const SizedBox(height: 12),
-              TextField(controller: _appId, decoration: const InputDecoration(labelText: 'Adzuna app id', border: OutlineInputBorder())),
+              TextField(
+                controller: _appId,
+                onChanged: (_) => setState(() => _test = null),
+                decoration: const InputDecoration(labelText: 'Adzuna app id', border: OutlineInputBorder()),
+              ),
             ],
             const SizedBox(height: 12),
             TextField(
@@ -675,29 +746,44 @@ class _AddKeyDialogState extends State<_AddKeyDialog> {
               obscureText: true,
               autocorrect: false,
               enableSuggestions: false,
+              onChanged: (_) => setState(() => _test = null),
               decoration: InputDecoration(
                 labelText: _provider == 'adzuna' ? 'Adzuna app key' : 'API key',
+                helperText: guide?.keyHint,
                 border: const OutlineInputBorder(),
               ),
             ),
-            if (_provider == 'gemini') ...[
-              const SizedBox(height: 8),
-              Text(
-                'Free Gemini limits are per Google Cloud project, so extra keys from the same project don\'t add quota.',
-                style: Theme.of(context).textTheme.bodySmall,
+            const SizedBox(height: 8),
+            Row(children: [
+              OutlinedButton.icon(
+                onPressed: _testing || _saving ? null : _runTest,
+                icon: _testing
+                    ? const SizedBox(width: 16, height: 16, child: CircularProgressIndicator(strokeWidth: 2))
+                    : const Icon(Icons.network_check, size: 18),
+                label: const Text('Test key'),
               ),
+            ]),
+            if (_test != null) ...[
+              const SizedBox(height: 8),
+              Row(crossAxisAlignment: CrossAxisAlignment.start, children: [
+                Icon(_test!.ok ? Icons.check_circle : Icons.error_outline, size: 18, color: _test!.ok ? Colors.green : Colors.orange),
+                const SizedBox(width: 6),
+                Expanded(child: Text(_test!.message, style: theme.textTheme.bodySmall)),
+              ]),
             ],
             if (_error != null) ...[
               const SizedBox(height: 8),
-              Text(_error!, style: TextStyle(color: Theme.of(context).colorScheme.error)),
+              Text(_error!, style: TextStyle(color: theme.colorScheme.error)),
             ],
           ]),
         ),
-        actions: [
-          TextButton(onPressed: _saving ? null : () => Navigator.pop(context, false), child: const Text('Cancel')),
-          FilledButton(onPressed: _saving ? null : _save, child: const Text('Save key')),
-        ],
-      );
+      ),
+      actions: [
+        TextButton(onPressed: _saving ? null : () => Navigator.pop(context, false), child: const Text('Cancel')),
+        FilledButton(onPressed: _saving ? null : _save, child: Text(_test?.ok == false ? 'Save anyway' : 'Save key')),
+      ],
+    );
+  }
 }
 
 

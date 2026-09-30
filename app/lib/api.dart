@@ -128,6 +128,53 @@ class Api {
       : supa.from('model_feedback').upsert(
           {'user_id': uid, 'job_id': jobId, 'agent': agent, 'model': model, 'rating': rating});
 
+  // ---------------------------------------------------------------- onboarding
+  static Future<void> acceptPrivacy() => supa.rpc('accept_privacy');
+
+  /// What a new user still has to set up before their agents can work.
+  static Future<SetupStatus> setupStatus() async {
+    final results = await Future.wait([
+      parentFiles('resume'),
+      apiKeys(),
+      account(),
+      settings(),
+      profile(),
+      supa.from('pipeline_runs').select('started_at,log').eq('user_id', uid).order('started_at', ascending: false).limit(1),
+    ]);
+    final resume = results[0] as List<String>;
+    final keys = results[1] as List<Map<String, dynamic>>;
+    final acct = results[2] as Map<String, dynamic>?;
+    final prefs = results[3] as Map<String, dynamic>;
+    final prof = results[4] as Map<String, dynamic>;
+    final runs = results[5] as List;
+    final log = runs.isEmpty ? '' : '${(runs.first as Map)['log'] ?? ''}';
+    final waiting = log.split('\n').where((l) => l.contains('Skipping this user')).map((l) => l.replaceFirst(RegExp(r'^\S+ '), '')).firstOrNull;
+    return SetupStatus(
+      resumeDocx: resume.any((f) => f.toLowerCase().endsWith('.docx')),
+      aiKey: keys.any((k) => const {'gemini', 'groq', 'openrouter'}.contains(k['provider'])) || acct?['use_shared_keys'] == true,
+      geminiKey: keys.any((k) => k['provider'] == 'gemini') || acct?['use_shared_keys'] == true,
+      locations: ((prefs['countries'] as List?) ?? []).isNotEmpty,
+      roles: ((prefs['target_roles'] as List?) ?? []).isNotEmpty || ((prof['titles'] as List?) ?? []).isNotEmpty,
+      jobBoards: ((prefs['job_boards'] as List?) ?? []).isNotEmpty,
+      extraKeys: keys.any((k) => const {'adzuna', 'rapidapi', 'groq'}.contains(k['provider'])),
+      privacyAccepted: acct?['privacy_accepted_at'] != null,
+      hasRun: runs.isNotEmpty,
+      waitingOn: waiting,
+    );
+  }
+
+  // ---------------------------------------------------------------- admin: users
+  static Future<List<Map<String, dynamic>>> adminUsers() async =>
+      List<Map<String, dynamic>>.from(await supa.rpc('admin_users') as List);
+
+  static Future<void> adminUpdateAccount(String userId, {required bool enabled, required bool useSharedKeys, required int llmCalls}) =>
+      supa.rpc('admin_update_account', params: {
+        'p_user': userId,
+        'p_enabled': enabled,
+        'p_use_shared_keys': useSharedKeys,
+        'p_llm_calls_per_run': llmCalls,
+      });
+
   static Future<void> setAgentsPaused(bool paused) =>
       supa.rpc('set_agents_paused', params: {'p_paused': paused, 'p_reason': paused ? 'Paused from the app' : null});
 

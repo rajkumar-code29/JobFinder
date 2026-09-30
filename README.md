@@ -135,6 +135,18 @@ You can also open `https://jobs.<your-domain>` in Safari → Share → **Add to 
 
 ---
 
+## Onboarding new users
+Run [`007_onboarding_and_users.sql`](supabase/migrations/007_onboarding_and_users.sql).
+- **Home → Getting started** lists what a user still has to do (resume .docx, AI key, locations, roles, then optional
+  extras) and shows why their agents are waiting, straight from the latest run.
+- **Settings → API keys → Add API key** explains, per provider, how to get the key and has a **Test key** button
+  (runs from the user's device; the key never passes through the database).
+- **Help** (the ? icon) explains the screens, batches, expected speed and the common log messages.
+- A one-time **privacy notice** on first login.
+- **Settings → Users** (admin): setup status, last run and its note, jobs, batch, storage per user; turn a user's agents
+  on/off, allow shared keys, set AI calls per run.
+- Jobs never marked Applied are deleted automatically after 30 days (`JOB_RETENTION_DAYS`), files included.
+
 ## Users & API keys
 
 **Each user only sees their own data.** Jobs, files, settings, API keys and agent activity are isolated by

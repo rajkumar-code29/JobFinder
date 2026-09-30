@@ -8,6 +8,7 @@ import 'package:supabase_flutter/supabase_flutter.dart';
 import 'auth_links.dart';
 import 'config.dart';
 import 'screens/agents.dart';
+import 'screens/help.dart';
 import 'screens/home.dart';
 import 'screens/interview.dart';
 import 'screens/job_detail.dart';
@@ -16,6 +17,7 @@ import 'screens/login.dart';
 import 'screens/models.dart';
 import 'screens/set_password.dart';
 import 'screens/settings.dart';
+import 'screens/users.dart';
 import 'widgets/shell.dart';
 
 Future<void> main() async {
@@ -104,6 +106,8 @@ class JobFinderApp extends StatelessWidget {
             ],
           ),
           GoRoute(path: '/settings', builder: (_, _) => const SettingsScreen()),
+          GoRoute(path: '/help', builder: (_, _) => const HelpScreen()),
+          GoRoute(path: '/admin/users', builder: (_, _) => const UsersScreen()),
         ],
       ),
     ],

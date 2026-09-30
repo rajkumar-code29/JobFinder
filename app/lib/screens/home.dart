@@ -6,6 +6,7 @@ import 'package:go_router/go_router.dart';
 import '../api.dart';
 import '../models.dart';
 import '../widgets/common.dart';
+import '../widgets/onboarding.dart';
 import 'agents.dart';
 
 class HomeScreen extends StatefulWidget {
@@ -61,6 +62,7 @@ class _HomeScreenState extends State<HomeScreen> {
     final running = _runs.where((r) => r.status == 'running').toList();
     return Scaffold(
       appBar: AppBar(title: const Text('Dashboard'), actions: [
+        IconButton(onPressed: () => context.go('/help'), icon: const Icon(Icons.help_outline), tooltip: 'How it works'),
         IconButton(onPressed: _load, icon: const Icon(Icons.refresh), tooltip: 'Refresh'),
       ]),
       body: RefreshIndicator(
@@ -68,6 +70,7 @@ class _HomeScreenState extends State<HomeScreen> {
         child: ListView(padding: const EdgeInsets.all(16), children: [
           PageBody(
             child: Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
+              const GettingStartedCard(),
               const AgentControlCard(),
               const _CurrentBatchCard(),
               if (_error != null && s == null) ErrorView(_error!, onRetry: _load),

@@ -126,6 +126,34 @@ def record_seen(user_id: str, context: str, rows: list[dict]) -> None:
         sb.table("seen_postings").upsert(payload[i:i + 500], on_conflict="user_id,source,external_id").execute()
 
 
+def cleanup_old_jobs(user_id: str, days: int) -> int:
+    """Delete jobs never marked Applied that are older than `days` (files, then row), leaving a "deleted"
+    marker so the Scout won't bring them back. Jobs in a batch that's still being processed are kept."""
+    cutoff = (datetime.now(timezone.utc) - timedelta(days=days)).isoformat()
+    rows = (sb.table("jobs").select("id,job_id,source,external_id,company,title,batch_id")
+            .eq("user_id", user_id).neq("status", "applied").lt("created_at", cutoff).limit(200).execute().data)
+    if not rows:
+        return 0
+    open_batches = {b["id"] for b in sb.table("batches").select("id").eq("user_id", user_id)
+                    .eq("status", "processing").execute().data}
+    removed = 0
+    for r in rows:
+        if r.get("batch_id") in open_batches:
+            continue
+        prefix = f"{user_id}/{r['job_id']}"
+        files = [f"{prefix}/{f['name']}" for f in list_files(prefix, JOBS_BUCKET)]
+        if files:
+            sb.storage.from_(JOBS_BUCKET).remove(files)
+        sb.table("seen_postings").upsert({
+            "user_id": user_id, "source": r["source"], "external_id": r["external_id"],
+            "fingerprint": fingerprint(r["company"], r["title"]), "context": "*", "relevance": -1,
+            "reason": f"auto-deleted after {days} days (never applied)", "seen_at": now_iso()},
+            on_conflict="user_id,source,external_id").execute()
+        sb.table("jobs").delete().eq("id", r["id"]).execute()
+        removed += 1
+    return removed
+
+
 def prune_seen() -> None:
     cutoff = (datetime.now(timezone.utc) - timedelta(days=SEEN_DAYS)).isoformat()
     sb.table("seen_postings").delete().lt("seen_at", cutoff).neq("context", "*").execute()  # keep "deleted" markers

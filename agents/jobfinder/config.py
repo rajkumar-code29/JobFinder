@@ -44,6 +44,8 @@ GEMINI_USE_ALL_MODELS = (env("GEMINI_USE_ALL_MODELS", "true") or "true").lower()
 # Starting gap between calls per key+model; unset = matched to free-tier limits (flash 5/min, flash-lite 15/min).
 GEMINI_MIN_INTERVAL_SEC = float(env("GEMINI_MIN_INTERVAL_SEC")) if env("GEMINI_MIN_INTERVAL_SEC") else None
 
+JOB_RETENTION_DAYS = int(env("JOB_RETENTION_DAYS", "30"))  # jobs never marked Applied are deleted after this
+
 NA = "NA"
 MAX_ATTEMPTS = 3
 HTTP_TIMEOUT = 25

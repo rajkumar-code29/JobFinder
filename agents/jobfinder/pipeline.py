@@ -15,7 +15,7 @@ import json
 import logging
 import sys
 
-from . import batch, control, db, llm
+from . import batch, config, control, db, llm
 from .agents import coach, profile as profile_agent, salary, scorer, tailor, writer
 from .keys import AI_PROVIDERS, KeyStateStore, build_pools, shared_keys
 
@@ -57,6 +57,12 @@ def run_user(account: dict, args, store: KeyStateStore, shared: dict, only_job: 
             run.note("No AI provider key available (Gemini, Groq, …): add one in Settings → API keys. Skipping this user.")
             return True
         settings = db.get_settings(uid)
+        try:
+            removed = db.cleanup_old_jobs(uid, config.JOB_RETENTION_DAYS)
+            if removed:
+                run.note(f"Cleaned up {removed} jobs older than {config.JOB_RETENTION_DAYS} days that were never applied to")
+        except Exception as exc:
+            log.warning("clean-up failed: %s", exc)
         profile = profile_agent.run(run)
         if profile is None:
             run.note("No parent resume uploaded yet (Settings → Parent documents). Skipping this user.")

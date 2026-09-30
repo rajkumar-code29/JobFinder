@@ -6,6 +6,45 @@ import '../api.dart';
 import '../models.dart';
 import '../widgets/common.dart';
 
+List<String> _strs(Object? v) =>
+    v is String ? (v.trim().isEmpty ? [] : [v]) : v is List ? [for (final x in v) '$x'] : [];
+
+List<Map<String, dynamic>> _items(Object? v) =>
+    v is List ? [for (final x in v) if (x is Map) Map<String, dynamic>.from(x)] : [];
+
+/// Same clean-up as clean_pack() in agents/jobfinder/agents/coach.py, for packs saved before it existed.
+Map<String, dynamic> normalizePack(Map<String, dynamic> pack) {
+  final ov = pack['overview'] is Map ? Map<String, dynamic>.from(pack['overview'] as Map) : <String, dynamic>{};
+  final mcq = <Map<String, dynamic>>[];
+  for (final q in _items(pack['mcq'])) {
+    final options = _strs(q['options']);
+    final answer = q['answer_index'] is num ? (q['answer_index'] as num).toInt() : int.tryParse('${q['answer_index']}');
+    if (q['question'] == null || options.length < 2 || answer == null || answer < 0 || answer >= options.length) continue;
+    final why = _strs(q['why_wrong']);
+    mcq.add({...q, 'options': options, 'answer_index': answer, 'why_wrong': [...why, ...List.filled(options.length, '')].take(options.length).toList()});
+  }
+  return {
+    'overview': {
+      'role_summary': ov['role_summary'] ?? (pack['overview'] is String ? pack['overview'] : null),
+      'company_notes': ov['company_notes'],
+      'interview_process_guess': _strs(ov['interview_process_guess']),
+    },
+    'mcq': mcq,
+    'technical': [
+      for (final q in _items(pack['technical']))
+        if (q['question'] != null)
+          {...q, 'what_they_look_for': _strs(q['what_they_look_for']), 'follow_ups': _strs(q['follow_ups'])},
+    ],
+    'coding': [
+      for (final q in _items(pack['coding']))
+        if (q['prompt'] != null)
+          {...q, 'examples': _items(q['examples']), 'constraints': _strs(q['constraints']), 'hints': _strs(q['hints'])},
+    ],
+    'behavioral': [for (final q in _items(pack['behavioral'])) if (q['question'] != null) q],
+    'questions_to_ask': _strs(pack['questions_to_ask']),
+  };
+}
+
 class InterviewScreen extends StatefulWidget {
   const InterviewScreen({super.key, required this.jobId});
   final String jobId;
@@ -22,7 +61,7 @@ class _InterviewScreenState extends State<InterviewScreen> {
     final job = Job(row);
     final path = job.files['interview'];
     if (path == null) throw 'The interview pack for this job has not been generated yet.';
-    return (job, await Api.readJson(path));
+    return (job, normalizePack(await Api.readJson(path)));
   }
 
   @override

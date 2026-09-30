@@ -17,6 +17,7 @@ import time
 from collections import Counter
 from datetime import timedelta
 
+import json_repair
 from google import genai
 from google.genai import errors, types
 
@@ -67,7 +68,9 @@ DEFAULT_ROUTING = {
     "coach": ["gemini:flash", "gemini:flash-lite"],
     "writer": ["gemini:flash", "gemini:flash-lite"],
 }
-MAX_OUTPUT_TOKENS = {"coach": 8192, "tailor": 6144, "profile": 4096, "scorer": 3072}
+# Room for the answer. Interview packs are long (~10k tokens); a cut-off answer is broken JSON.
+MAX_OUTPUT_TOKENS = {"coach": 32768, "tailor": 16384, "profile": 8192, "scorer": 8192}
+DEFAULT_OUTPUT_TOKENS = 8192
 _routing: dict[str, list[str]] = dict(DEFAULT_ROUTING)
 
 
@@ -357,6 +360,11 @@ def _call(provider: str, key, model: str, prompt: str, system: str | None, json_
         except (AttributeError, IndexError, TypeError):
             pass
         usage = getattr(resp, "usage_metadata", None)
+        try:
+            if "MAX_TOKENS" in str(resp.candidates[0].finish_reason):
+                _event(f"{model} hit its output limit ({max_tokens} tokens); the answer may be cut short")
+        except (AttributeError, IndexError, TypeError):
+            pass
         return resp.text, sources, getattr(usage, "total_token_count", None)
     text, tokens = providers.chat(provider, key.value, model, system, prompt, json_mode=json_mode,
                                   temperature=temperature, max_tokens=max_tokens)
@@ -375,7 +383,7 @@ def _generate(prompt: str, *, agent: str, system: str | None, json_mode: bool, s
                             f"(Settings → API keys) or change its routing")
     deadline = time.monotonic() + (MAX_WAIT_PER_SEARCH if search else MAX_WAIT_PER_CALL)
     est_tokens = (len(prompt) + len(system or "")) // 4
-    out_tokens = MAX_OUTPUT_TOKENS.get(agent, 2048)
+    out_tokens = MAX_OUTPUT_TOKENS.get(agent, DEFAULT_OUTPUT_TOKENS)
     last_error, server_errors = "no response", 0
 
     for position, (provider, model) in enumerate(chain):
@@ -474,11 +482,25 @@ def _generate(prompt: str, *, agent: str, system: str | None, json_mode: bool, s
 
 
 def _parse_json(text: str):
+    """Strict JSON first; then the JSON inside a code fence or the outermost braces; then a tolerant repair
+    (missing commas, trailing commas, unescaped quotes, an answer cut short) before giving up."""
     text = (text or "").strip()
     try:
         return json.loads(text)
     except json.JSONDecodeError:
         pass
+    try:
+        return _strict_parts(text)
+    except ValueError:
+        pass
+    repaired = json_repair.loads(text)
+    if isinstance(repaired, (dict, list)) and repaired:
+        _event("Repaired slightly malformed JSON from the model")
+        return repaired
+    raise ValueError(f"Model did not return JSON: {text[:300]}")
+
+
+def _strict_parts(text: str):
     fence = re.search(r"```(?:json)?\s*(.*?)```", text, re.S)
     if fence:
         try:

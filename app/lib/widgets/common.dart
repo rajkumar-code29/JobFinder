@@ -10,6 +10,7 @@ class PageBody extends StatelessWidget {
   @override
   Widget build(BuildContext context) => Align(
         alignment: Alignment.topCenter,
+        heightFactor: 1, // only as tall as the content – otherwise it fills e.g. a whole bottom bar
         child: ConstrainedBox(constraints: BoxConstraints(maxWidth: maxWidth), child: child),
       );
 }

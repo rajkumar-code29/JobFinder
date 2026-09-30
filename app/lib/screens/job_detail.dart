@@ -51,7 +51,7 @@ class _JobDetailScreenState extends State<JobDetailScreen> {
               ? ErrorView(snap.error!)
               : job == null
                   ? Center(child: snap.hasData ? const Text('Job not found') : const CircularProgressIndicator())
-                  : _Body(job: job),
+                  : JobDetailBody(job: job),
           bottomNavigationBar: job == null ? null : _ActionBar(job: job),
         );
       },
@@ -59,8 +59,8 @@ class _JobDetailScreenState extends State<JobDetailScreen> {
   }
 }
 
-class _Body extends StatelessWidget {
-  const _Body({required this.job});
+class JobDetailBody extends StatelessWidget {
+  const JobDetailBody({super.key, required this.job});
   final Job job;
 
   @override

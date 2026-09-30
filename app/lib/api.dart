@@ -54,6 +54,35 @@ class Api {
       .from('jobs')
       .update({'status': 'ready', 'applied_at': null, 'applied_with': null}).eq('job_id', jobId);
 
+  static Future<void> setApplied(Job job, bool applied) =>
+      applied ? markApplied(job.jobId, 'marked in the app') : unmarkApplied(job.jobId);
+
+  /// Deletes the job's files, then the job itself. A tiny "deleted" marker stays so the Scout never brings it back.
+  static Future<void> deleteJob(String jobId) async {
+    final dir = '$uid/$jobId';
+    final files = await supa.storage.from(jobsBucket).list(path: dir);
+    final paths = files.where((f) => f.id != null).map((f) => '$dir/${f.name}').toList();
+    if (paths.isNotEmpty) await supa.storage.from(jobsBucket).remove(paths);
+    await supa.rpc('delete_job', params: {'p_job_id': jobId});
+  }
+
+  // ---------------------------------------------------------------- batches
+  static Stream<List<Batch>> batchesStream() => supa
+      .from('batches')
+      .stream(primaryKey: ['id'])
+      .order('number')
+      .limit(100)
+      .map((rows) => rows.map(Batch.new).toList());
+
+  // ---------------------------------------------------------------- kill switch
+  static Stream<AgentControl?> controlStream() => supa
+      .from('agent_control')
+      .stream(primaryKey: ['id'])
+      .map((rows) => rows.isEmpty ? null : AgentControl(rows.first));
+
+  static Future<void> setAgentsPaused(bool paused) =>
+      supa.rpc('set_agents_paused', params: {'p_paused': paused, 'p_reason': paused ? 'Paused from the app' : null});
+
   // ---------------------------------------------------------------- files
   static Future<String> readText(String path, {String bucket = jobsBucket}) async =>
       utf8.decode(await supa.storage.from(bucket).download(path));

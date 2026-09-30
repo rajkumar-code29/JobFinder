@@ -1,5 +1,6 @@
 """Hourly pipeline, run for every enabled user in turn:
-Profile → Scout → for each queued job: Salary → Scorer → Tailor → Coach → Writer.
+Profile → batch workflow (see batch.py): Scout fills Batch #N → Salary (all) → Scorer (all, ranked) →
+Tailor → Coach → Writer one job at a time in rank order. An admin can pause everything (control.py).
 
 Each user gets their own API-key pool (their keys first, then the shared keys if their account allows it)
 and their own Gemini call budget, so one user can't use up another's limits.
@@ -14,8 +15,8 @@ import json
 import logging
 import sys
 
-from . import config, db, llm
-from .agents import coach, profile as profile_agent, salary, scorer, scout, tailor, writer
+from . import batch, control, db, llm
+from .agents import coach, profile as profile_agent, salary, scorer, tailor, writer
 from .keys import KeyStateStore, build_pools, shared_keys
 
 log = logging.getLogger("jobfinder")
@@ -49,7 +50,8 @@ def run_user(account: dict, args, store: KeyStateStore, shared: dict, only_job: 
     run.note(f"User {db.user_label(uid)}")
     status = "success"
     pools = build_pools(account, db.user_api_keys(uid), store, shared)
-    llm.activate(pools["gemini"], int(account.get("llm_calls_per_run") or 40), on_event=run.note)
+    llm.activate(pools["gemini"], int(account.get("llm_calls_per_run") or 40), on_event=run.note,
+                 should_stop=control.paused)
     try:
         if not pools["gemini"]:
             run.note("No Gemini API key available: add one in Settings → API keys. Skipping this user.")
@@ -61,37 +63,26 @@ def run_user(account: dict, args, store: KeyStateStore, shared: dict, only_job: 
             return True
         brief = profile_agent.brief(profile)
 
-        if not args.skip_scout and not only_job:
+        if only_job:  # --job: full reprocess of one job, outside the batch flow
             try:
-                with run.agent("scout", message="Scout orchestration") as task:
-                    stored = scout.run(run, settings, profile, brief, pools, force_all=args.all_sources or args.trigger == "manual")
-                    task.message = f"Scanned {run.scanned}, stored {stored} relevant new jobs"
-            except (llm.BudgetExceeded, llm.KeysExhausted):
-                raise  # nothing left to process with either
+                process(run, {**only_job, "status": "new", "files": {}, "attempts": 0}, profile, brief, settings)
+            except llm.StopUser:
+                raise
             except Exception as exc:
-                # Scouting failed, but jobs already in the queue can still be scored/tailored.
-                run.note(f"Scout failed ({exc}); continuing with already queued jobs")
-            run.save()
-
-        if only_job:
-            queue = [{**only_job, "status": "new", "files": {}, "attempts": 0}]  # full reprocess
+                db.update_job(only_job["job_id"], {"error": str(exc)[:2000]})
+                raise
         else:
-            queue = db.queued_jobs(uid, settings["max_jobs_per_run"])
-        run.note(f"Processing {len(queue)} job(s)")
-
-        for job in queue:
-            try:
-                process(run, job, profile, brief, settings)
-            except llm.StopUser as exc:
-                run.note(f"Stopping: {exc}. Remaining jobs continue next run.")
-                break
-            except Exception as exc:
-                attempts = int(job.get("attempts") or 0) + 1
-                values = {"attempts": attempts, "error": str(exc)[:2000]}
-                if attempts >= config.MAX_ATTEMPTS:
-                    values["status"] = "error"
-                db.update_job(job["job_id"], values)
+            current = db.open_batch(uid)
+            if current is None and not args.skip_scout:
+                current = batch.start(run, settings, profile, brief, pools,
+                                      force_all=args.all_sources or args.trigger == "manual")
+            elif current is not None:
+                run.note(f"Continuing Batch #{current['number']} (no new scan until it's finished)")
             run.save()
+            if current is not None:
+                batch.process(run, current, profile, brief, settings)
+    except llm.Paused:
+        run.note("Agents paused by an admin – stopping")
     except llm.StopUser as exc:
         run.note(f"Stopping: {exc}")
     except Exception as exc:
@@ -117,6 +108,9 @@ def main(argv=None) -> int:
     args = ap.parse_args(argv)
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
 
+    if control.paused():
+        log.info("Agents are paused by an admin (Home → Resume agents) – nothing to do.")
+        return 0
     db.expire_stale_agent_runs()
     if args.trigger == "schedule" and not (args.job or args.user) and db.scheduled_run_since(minutes=40):
         # The Cloudflare scheduler and GitHub's backup cron can both fire; one scheduled run per slot is enough.
@@ -147,6 +141,9 @@ def main(argv=None) -> int:
     shared = shared_keys(store)
     ok = True
     for account in accounts:
+        if control.paused():
+            log.info("Agents paused by an admin – skipping the remaining users.")
+            break
         ok = run_user(account, args, store, shared, only_job) and ok
     return 0 if ok else 1
 

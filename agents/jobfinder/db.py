@@ -98,22 +98,23 @@ SEEN_DAYS = 45
 def seen_lookup(user_id: str, context: str, keys: list[tuple[str, str, str]]) -> tuple[dict, dict]:
     """keys = [(source, external_id, fingerprint)]. Returns ({(source, external_id): row}, {fingerprint: row})
     for postings already rated under the same resume/roles/locations context."""
-    by_key, by_fp = {}, {}
-    since = (datetime.now(timezone.utc) - timedelta(days=SEEN_DAYS)).isoformat()
-    cols = "source,external_id,fingerprint,relevance,reason"
+    by_key, by_fp = {}, {}  # rows older than SEEN_DAYS are pruned at the start of each run (except "deleted" markers)
+    cols = "source,external_id,fingerprint,relevance,reason,context"
     by_source: dict[str, list[str]] = {}
     for source, ext, _ in keys:
         by_source.setdefault(source, []).append(ext)
     for source, ids in by_source.items():
         for i in range(0, len(ids), 100):
-            rows = (sb.table("seen_postings").select(cols).eq("user_id", user_id).eq("context", context)
-                    .eq("source", source).in_("external_id", ids[i:i + 100]).gte("seen_at", since).execute().data)
+            rows = (sb.table("seen_postings").select(cols).eq("user_id", user_id).in_("context", [context, "*"])
+                    .eq("source", source).in_("external_id", ids[i:i + 100]).execute().data)
             by_key.update({(r["source"], r["external_id"]): r for r in rows})
     fps = sorted({fp for _, _, fp in keys})
     for i in range(0, len(fps), 100):
-        rows = (sb.table("seen_postings").select(cols).eq("user_id", user_id).eq("context", context)
-                .in_("fingerprint", fps[i:i + 100]).gte("seen_at", since).execute().data)
-        by_fp.update({r["fingerprint"]: r for r in rows})
+        rows = (sb.table("seen_postings").select(cols).eq("user_id", user_id).in_("context", [context, "*"])
+                .in_("fingerprint", fps[i:i + 100]).execute().data)
+        for r in rows:  # a "deleted" marker beats any rating of the same job on another site
+            if r["context"] == "*" or r["fingerprint"] not in by_fp:
+                by_fp[r["fingerprint"]] = r
     return by_key, by_fp
 
 
@@ -127,7 +128,7 @@ def record_seen(user_id: str, context: str, rows: list[dict]) -> None:
 
 def prune_seen() -> None:
     cutoff = (datetime.now(timezone.utc) - timedelta(days=SEEN_DAYS)).isoformat()
-    sb.table("seen_postings").delete().lt("seen_at", cutoff).execute()
+    sb.table("seen_postings").delete().lt("seen_at", cutoff).neq("context", "*").execute()  # keep "deleted" markers
 
 
 def fingerprint(company: str, title: str) -> str:
@@ -205,7 +206,7 @@ class PipelineRun:
         self._saved_at = time.monotonic()
 
     @contextmanager
-    def agent(self, name: str, job_id: str | None = None, message: str | None = None):
+    def agent(self, name: str, job_id: str | None = None, message: str | None = None):  # noqa: C901
         """Record an agent task in agent_runs so the dashboard can show live activity and errors."""
         row = sb.table("agent_runs").insert(
             {"pipeline_run": self.id, "user_id": self.user_id, "agent": name, "job_id": job_id, "message": message}
@@ -213,7 +214,12 @@ class PipelineRun:
         task = AgentTask(row["id"], message)
         try:
             yield task
-        except Exception as exc:
+        except BaseException as exc:  # includes cancellation (KeyboardInterrupt), so no task stays "running"
+            if not isinstance(exc, Exception):
+                sb.table("agent_runs").update(
+                    {"status": "error", "message": "stopped (run cancelled)", "finished_at": now_iso()}
+                ).eq("id", row["id"]).execute()
+                raise
             self.errors += 1
             self.note(f"[{name}] {job_id or ''} ERROR {exc}")
             log.debug(traceback.format_exc())
@@ -240,11 +246,42 @@ def scheduled_run_since(minutes: int) -> bool:
 
 
 def expire_stale_agent_runs() -> None:
-    """A killed workflow leaves rows stuck in 'running'; close them so the dashboard stays honest."""
-    cutoff = (datetime.now(timezone.utc) - timedelta(hours=2)).isoformat()
+    """Only one pipeline runs at a time (GitHub concurrency group), so anything still 'running' when a new run
+    starts belongs to a run that was cancelled or crashed: close it so the dashboard stays honest."""
     sb.table("agent_runs").update(
-        {"status": "error", "message": "timed out (runner stopped)", "finished_at": now_iso()}
-    ).eq("status", "running").lt("started_at", cutoff).execute()
+        {"status": "error", "message": "stopped (the run ended unexpectedly)", "finished_at": now_iso()}
+    ).eq("status", "running").execute()
     sb.table("pipeline_runs").update(
         {"status": "error", "finished_at": now_iso()}
-    ).eq("status", "running").lt("started_at", cutoff).execute()
+    ).eq("status", "running").execute()
+
+
+# ---------------------------------------------------------------- batches
+def open_batch(user_id: str) -> dict | None:
+    rows = (sb.table("batches").select("*").eq("user_id", user_id).eq("status", "processing")
+            .order("number", desc=True).limit(1).execute().data)
+    return rows[0] if rows else None
+
+
+def unbatched_jobs(user_id: str, limit: int) -> list[dict]:
+    """Relevant jobs waiting for a batch (best match first)."""
+    return (sb.table("jobs").select("id,job_id,relevance").eq("user_id", user_id).eq("status", "new")
+            .is_("batch_id", "null").lt("attempts", config.MAX_ATTEMPTS)
+            .order("relevance", desc=True).order("created_at").limit(limit).execute().data)
+
+
+def create_batch(user_id: str, job_ids: list[str]) -> dict:
+    last = sb.table("batches").select("number").eq("user_id", user_id).order("number", desc=True).limit(1).execute().data
+    number = (last[0]["number"] if last else 0) + 1
+    batch = sb.table("batches").insert({"user_id": user_id, "number": number, "job_count": len(job_ids)}).execute().data[0]
+    for i in range(0, len(job_ids), 100):
+        sb.table("jobs").update({"batch_id": batch["id"]}).in_("id", job_ids[i:i + 100]).execute()
+    return batch
+
+
+def batch_jobs(batch_id: str) -> list[dict]:
+    return sb.table("jobs").select("*").eq("batch_id", batch_id).execute().data
+
+
+def update_batch(batch_id: str, values: dict) -> None:
+    sb.table("batches").update(values).eq("id", batch_id).execute()

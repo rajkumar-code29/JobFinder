@@ -37,48 +37,35 @@ def _hour() -> int:
     return datetime.now(timezone.utc).hour
 
 
-def collect(run: db.PipelineRun, settings: dict, roles: list[str], force_all: bool, pools: dict) -> list[RawJob]:
+def source_plan(settings: dict, roles: list[str], force_all: bool, pools: dict) -> list[tuple[str, callable]]:
+    """(label, fetch) for every source due this run, in the order they're scanned: the user's own company
+    boards first (highest intent), then the aggregators. The Scout stops as soon as the batch is full."""
     countries = [normalize_location(c) for c in settings["countries"]] or ["us"]
     src = settings.get("sources") or {}
     hour = _hour()
-    plan = [
-        # (name, enabled, due this hour?, fetcher)
-        ("adzuna", src.get("adzuna", True), True, lambda: aggregators.adzuna(roles, countries, pools["adzuna"])),
-        ("arbeitnow", src.get("arbeitnow", True), True, lambda: aggregators.arbeitnow(roles, countries)),
-        ("remotive", src.get("remotive", True) and settings["remote_ok"], hour % 6 == 0, lambda: aggregators.remotive(roles, countries)),
-        ("jsearch", src.get("jsearch", True), hour == 6, lambda: aggregators.jsearch(roles, countries, pools["rapidapi"])),
-        ("google_search", src.get("google_search", True), hour % 4 == 0, lambda: google_search.search_roles(roles, countries)),
-    ]
-    raw: list[RawJob] = []
-    for name, enabled, due, fetch in plan:
-        if not enabled or not (due or (force_all and name != "jsearch")):
-            continue
-        try:
-            with run.agent("scout", message=f"Scanning {name}") as task:
-                found = fetch()
-                raw += found
-                task.message = f"{name}: {len(found)} postings"
-        except llm.StopUser:
-            raise
-        except Exception:
-            continue  # already logged as an agent error; the other sources still run
+    plan: list[tuple[str, callable]] = []
 
     for board in settings.get("job_boards") or []:
         url = (board or {}).get("url", "").strip()
         if not url or not board.get("enabled", True):
             continue
-        try:
-            with run.agent("scout", message=f"Scanning board {url}") as task:
-                found, handled = boards.fetch_board(url, roles)
-                if not handled and (hour % 4 == 0 or force_all):
-                    found = google_search.search_site(url, roles, countries)
-                raw += found
-                task.message = f"{url}: {len(found)} postings" + ("" if handled else " (via Google search)")
-        except llm.StopUser:
-            raise
-        except Exception:
-            continue  # e.g. a mistyped company slug – logged, the other boards still run
-    return raw
+        def fetch_board(url=url):
+            found, handled = boards.fetch_board(url, roles)
+            if not handled:
+                found = google_search.search_site(url, roles, countries) if (hour % 4 == 0 or force_all) else []
+            return found
+        plan.append((f"board {url}", fetch_board))
+
+    for name, enabled, due, fetch in [
+        ("adzuna", src.get("adzuna", True), True, lambda: aggregators.adzuna(roles, countries, pools["adzuna"])),
+        ("jsearch", src.get("jsearch", True), hour == 6, lambda: aggregators.jsearch(roles, countries, pools["rapidapi"])),
+        ("remotive", src.get("remotive", True) and settings["remote_ok"], hour % 6 == 0, lambda: aggregators.remotive(roles, countries)),
+        ("arbeitnow", src.get("arbeitnow", True), True, lambda: aggregators.arbeitnow(roles, countries)),
+        ("google_search", src.get("google_search", True), hour % 4 == 0, lambda: google_search.search_roles(roles, countries)),
+    ]:
+        if enabled and (due or (force_all and name != "jsearch")):
+            plan.append((name, fetch))
+    return plan
 
 
 def prefilter(jobs: list[RawJob], settings: dict, profile: dict, roles: list[str]) -> list[RawJob]:
@@ -126,17 +113,45 @@ def rate(jobs: list[RawJob], settings: dict, profile_brief: str, roles: list[str
     return out
 
 
-def run(run: db.PipelineRun, settings: dict, profile: dict, profile_brief: str, pools: dict, force_all: bool = False) -> int:
+def run(run: db.PipelineRun, settings: dict, profile: dict, profile_brief: str, pools: dict,
+        force_all: bool = False, limit: int | None = None, should_stop=lambda: False) -> int:
+    """Scan sources one at a time; rate what's new; store relevant jobs (best first) until `limit` are stored."""
     roles = settings.get("target_roles") or (profile.get("titles") or [])[:3]
     if not roles:
         raise RuntimeError("No target roles: set them in Settings or upload a resume first")
-
-    raw = collect(run, settings, roles, force_all, pools)
-    run.scanned += len(raw)
-    run.note(f"Scanned {len(raw)} postings")
-
-    # De-duplicate against the database and across sources.
+    threshold = settings["min_relevance"]
+    context = rating_context(profile, settings, roles)
     fps = db.recent_fingerprints(run.user_id)
+    stored = 0
+
+    for label, fetch in source_plan(settings, roles, force_all, pools):
+        if should_stop():
+            raise llm.Paused("Agents paused by an admin")
+        try:
+            with run.agent("scout", message=f"Scanning {label}") as task:
+                raw = fetch()
+                task.message = f"{label}: {len(raw)} postings"
+        except llm.StopUser:
+            raise
+        except Exception:
+            continue  # already logged as an agent error; the other sources still run
+        run.scanned += len(raw)
+        keep = _evaluate(run, raw, fps, settings, profile, profile_brief, roles, context, threshold)
+        for job, score, why in sorted(keep, key=lambda x: -x[1]):
+            if limit is not None and stored >= limit:
+                break  # rated and remembered: picked up for a later batch without asking the AI again
+            if _store(run, job, score, why):
+                stored += 1
+        if limit is not None and stored >= limit:
+            run.note(f"Found {stored} relevant jobs – enough for this batch, stopping the scan")
+            break
+    run.matched += stored
+    return stored
+
+
+def _evaluate(run: db.PipelineRun, raw: list[RawJob], fps: set[str], settings: dict, profile: dict,
+              profile_brief: str, roles: list[str], context: str, threshold: int) -> list[tuple[RawJob, int, str]]:
+    """De-duplicate, skip postings already rated or deleted, then rate the rest. Returns the relevant ones."""
     fresh: list[RawJob] = []
     by_source: dict[str, list[RawJob]] = {}
     for j in raw:
@@ -149,10 +164,9 @@ def run(run: db.PipelineRun, settings: dict, profile: dict, profile_brief: str, 
                 continue
             fps.add(fp)
             fresh.append(j)
+    if not fresh:
+        return []
 
-    # Skip postings the AI already rated for this resume/roles/locations (kept or rejected).
-    threshold = settings["min_relevance"]
-    context = rating_context(profile, settings, roles)
     by_key, by_fp = db.seen_lookup(run.user_id, context, [(j.source, j.external_id, db.fingerprint(j.company, j.title)) for j in fresh])
     unseen, reuse, skipped = [], [], 0
     for j in fresh:
@@ -160,17 +174,17 @@ def run(run: db.PipelineRun, settings: dict, profile: dict, profile_brief: str, 
         if prev is None:
             unseen.append(j)
         elif prev["relevance"] >= threshold:
-            reuse.append((j, prev["relevance"], prev["reason"]))  # e.g. threshold lowered since: keep, no AI call
+            reuse.append((j, prev["relevance"], prev["reason"]))  # rated earlier and relevant: no AI call
         else:
-            skipped += 1
+            skipped += 1  # rejected earlier, or deleted by the user
 
     unseen = _hydrate_new(run, unseen)
     reused_jobs = {id(j) for j in _hydrate_new(run, [j for j, _, _ in reuse])}
     reuse = [r for r in reuse if id(r[0]) in reused_jobs]
     candidates = prefilter(unseen, settings, profile, roles)
-    run.note(f"{len(fresh)} not yet saved: {skipped} already rated earlier (skipped, no AI), "
-             f"{len(unseen)} new, {len(candidates)} of those pass the keyword filter"
-             + (f", {len(reuse)} earlier ratings now above the threshold" if reuse else ""))
+    run.note(f"{len(fresh)} not yet saved: {skipped} already rated or deleted (skipped, no AI), "
+             f"{len(unseen)} new, {len(candidates)} pass the keyword filter"
+             + (f", {len(reuse)} rated earlier and relevant" if reuse else ""))
 
     keep = list(reuse)
     if candidates:
@@ -180,28 +194,28 @@ def run(run: db.PipelineRun, settings: dict, profile: dict, profile_brief: str, 
                 {"source": j.source, "external_id": j.external_id, "fingerprint": db.fingerprint(j.company, j.title),
                  "relevance": score, "reason": (why or NA)[:500]}
                 for j, score, why in rated])
-            keep += [(j, score, why) for j, score, why in rated if score >= threshold]
-            task.message = f"{len(keep)} of {len(candidates)} jobs match the resume (≥{threshold})"
-    if not keep:
-        return 0
+            relevant = [(j, score, why) for j, score, why in rated if score >= threshold]
+            keep += relevant
+            task.message = f"{len(relevant)} of {len(candidates)} jobs match the resume (≥{threshold})"
+    return keep
 
-    stored = 0
-    for job, score, why in sorted(keep, key=lambda x: -x[1]):
-        if len(job.description) < 800 or job.description == NA:
-            _enrich(job)
-        row = job.as_row()
-        row.update(job_id=new_job_id(), user_id=run.user_id, relevance=score, relevance_reason=why, status="new")
-        if job.salary_text != NA:
-            row["salary_source"] = "job_posting"
-        if est := job.extra.get("adzuna_estimate"):
-            row["meta"] = {"adzuna_estimate": est}
-        try:
-            db.insert_job(row)
-            stored += 1
-        except Exception as exc:  # unique violation from a concurrent insert, etc.
-            log.warning("insert failed for %s: %s", job.title, exc)
-    run.matched += stored
-    return stored
+
+def _store(run: db.PipelineRun, job: RawJob, score: int, why: str) -> bool:
+    """Save a relevant job, loading the complete description from the posting page when the feed only had a snippet."""
+    if len(job.description) < 800 or job.description == NA:
+        _enrich(job)
+    row = job.as_row()
+    row.update(job_id=new_job_id(), user_id=run.user_id, relevance=score, relevance_reason=why, status="new")
+    if job.salary_text != NA:
+        row["salary_source"] = "job_posting"
+    if est := job.extra.get("adzuna_estimate"):
+        row["meta"] = {"adzuna_estimate": est}
+    try:
+        db.insert_job(row)
+        return True
+    except Exception as exc:  # unique violation from a concurrent insert, etc.
+        log.warning("insert failed for %s: %s", job.title, exc)
+        return False
 
 
 def rating_context(profile: dict, settings: dict, roles: list[str]) -> str:

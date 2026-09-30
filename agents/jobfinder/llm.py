@@ -37,6 +37,10 @@ class RateLimited(StopUser):
     """Circuit breaker tripped: Gemini keeps saying 'too many requests'. Stop, don't hammer the account."""
 
 
+class Paused(StopUser):
+    """An admin switched the agents off (kill switch): stop everything at the next step."""
+
+
 class SearchUnavailable(RuntimeError):
     """Google-grounded search is being rate-limited: skip search for the rest of the run (other work continues)."""
 
@@ -119,7 +123,10 @@ def build_chain(tier: str, key) -> list[str]:
     lite = _family_models("flash-lite", config.GEMINI_FAST_MODEL, key)
     flash = _family_models("flash", config.GEMINI_MODEL, key)
     chain = {"light": lite, "search": lite + flash, "standard": flash + lite}[tier]
-    return [m for m in dict.fromkeys(chain) if m not in _retired]
+    now = time.monotonic()
+    chain = [m for m in dict.fromkeys(chain) if m not in _retired]
+    # Models Google reported as overloaded go to the back for a few minutes (still tried if nothing else is left).
+    return [m for m in chain if _overloaded.get(m, 0) <= now] + [m for m in chain if _overloaded.get(m, 0) > now]
 
 
 def _resolve(model: str) -> str:
@@ -136,11 +143,15 @@ _rejections = _consecutive = _search_rejections = 0
 _rejected_keys: dict[str, object] = {}
 _search_disabled = False
 _on_event = None
+_should_stop = lambda: False  # noqa: E731 – replaced per run with the kill-switch check
+_overloaded: dict[str, float] = {}  # model -> monotonic time until which it's skipped (503 "high demand")
+OVERLOAD_PAUSE = 300
 
 
-def activate(pool: KeyPool, budget: int, on_event=None) -> None:
+def activate(pool: KeyPool, budget: int, on_event=None, should_stop=None) -> None:
     """Start a user's turn: their key pool, budget and breaker. Notices are per user, so they reset too."""
-    global _pool, _budget, calls_made, _rejections, _consecutive, _search_rejections, _search_disabled, _on_event
+    global _pool, _budget, calls_made, _rejections, _consecutive, _search_rejections, _search_disabled, _on_event, _should_stop
+    _should_stop = should_stop or (lambda: False)
     _pool, _budget, calls_made = pool, budget, 0
     _rejections = _consecutive = _search_rejections = 0
     _search_disabled = False
@@ -262,6 +273,8 @@ def _generate(prompt: str, *, system: str | None, tier: str, json_mode: bool, se
     for position, configured in enumerate(chain):
         model = _resolve(configured)
         for _ in range(200):  # safety net; the deadline normally ends the loop
+            if _should_stop():
+                raise Paused("Agents paused by an admin")
             if calls_made >= _budget:
                 raise BudgetExceeded(f"Gemini call budget of {_budget} used for this run")
             try:
@@ -312,10 +325,16 @@ def _generate(prompt: str, *, system: str | None, tier: str, json_mode: bool, se
                     last_error = _reason(code, msg)
                     _pool.park(key, ALL_SCOPES, utcnow() + timedelta(hours=24), f"rejected by Gemini (HTTP {code}): invalid or unauthorized key")
                     continue
-                if code in (500, 502, 503, 504) and server_errors < 3:
+                if code in (500, 502, 503, 504):
+                    # "This model is currently experiencing high demand": not our quota, not the key. Move on to the
+                    # next model in the chain instead of failing the job; come back to this one in a few minutes.
+                    calls_made -= 1
                     server_errors += 1
-                    time.sleep(10 * server_errors)
-                    continue
+                    last_error = _reason(code, msg)
+                    _overloaded[model] = time.monotonic() + OVERLOAD_PAUSE
+                    if server_errors <= 3:
+                        _event(f"Gemini {model} overloaded ({last_error}); trying the next model")
+                    break
                 raise
         if position + 1 < len(chain) and (model, chain[position + 1]) not in _fallbacks_noted:
             _fallbacks_noted.add((model, chain[position + 1]))
@@ -345,10 +364,17 @@ def _parse_json(text: str):
 
 
 def ask_json(prompt: str, *, system: str | None = None, fast: bool = False, temperature: float = 0.3):
-    """fast=True for high-volume work (rating, scoring) on flash-lite; otherwise flash with flash-lite fallback."""
-    resp = _generate(prompt, system=system, tier="light" if fast else "standard", json_mode=True, search=False,
-                     temperature=temperature)
-    return _parse_json(resp.text)
+    """fast=True for high-volume work (rating, scoring) on flash-lite; otherwise flash with flash-lite fallback.
+    Malformed JSON gets one retry with a stricter instruction before failing."""
+    tier = "light" if fast else "standard"
+    resp = _generate(prompt, system=system, tier=tier, json_mode=True, search=False, temperature=temperature)
+    try:
+        return _parse_json(resp.text)
+    except ValueError as exc:  # json.JSONDecodeError is a ValueError
+        _event(f"Model returned invalid JSON ({exc}); retrying once")
+        resp = _generate(prompt + "\n\nReturn ONLY valid JSON: double-quoted keys and strings, no comments, "
+                         "no trailing commas.", system=system, tier=tier, json_mode=True, search=False, temperature=0)
+        return _parse_json(resp.text)
 
 
 def search_json(prompt: str, *, system: str | None = None) -> tuple[object, list[dict]]:

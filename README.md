@@ -165,6 +165,17 @@ later runs skip it. Invalid keys are parked for 24 h. Users see each key's statu
   Google and Adzuna don't allow it, and they can suspend accounts that do.
 - Everyone's agents run on the owner's GitHub Actions minutes.
 
+## How a run works (batches)
+1. **Scout**: scans your company boards first, then the aggregators, and stops once it has `batch_size` (default 20,
+   Settings) relevant jobs with full descriptions. They become **Batch #N**. No new scanning while a batch is open;
+   relevant jobs found beyond the batch size wait for the next batch (already rated, no extra AI calls).
+2. **Salary**: missing salaries for every job in the batch (checked once per job).
+3. **Scorer**: ATS-scores every job, then ranks the batch (#1 = highest score).
+4. **Tailor → Coach → Writer**: one job at a time in rank order, `max_jobs_per_run` per hourly run, until the batch is done.
+In the app, Jobs are grouped by batch and sorted by rank; each job has **Applied / Not applied** and **Delete**
+(removes the job, its files and its row; a tiny marker keeps the Scout from bringing it back).
+Run [`005_batches_and_control.sql`](supabase/migrations/005_batches_and_control.sql) for batches, delete and the kill switch.
+
 ## Admin tools (`@rajkumar.codes` accounts)
 Run [`004_admin_tools.sql`](supabase/migrations/004_admin_tools.sql), then store the GitHub token for **Run now**
 in Supabase Vault (SQL editor, your fine-grained token with *Actions: Read and write* on this repo):
@@ -175,6 +186,8 @@ select vault.create_secret('github_pat_…', 'gh_dispatch_token', 'Starts the Jo
   characters). See which key is **In use**, when it was last used, whether it's paused and why; switch keys on/off,
   **Use this key first**, add or remove keys stored in the app.
 - **Agents → Run now:** starts the agents workflow (at most once every 5 minutes).
+- **Home → Pause all / Resume:** kill switch. Running agents stop at their next step; scheduled runs skip until resumed.
+  Everyone sees a "paused" banner.
 - The database enforces admin access (`public.is_admin()`), not just the UI.
 
 ## Gemini safety stop

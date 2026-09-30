@@ -68,6 +68,8 @@ class _HomeScreenState extends State<HomeScreen> {
         child: ListView(padding: const EdgeInsets.all(16), children: [
           PageBody(
             child: Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
+              const AgentControlCard(),
+              const _CurrentBatchCard(),
               if (_error != null && s == null) ErrorView(_error!, onRetry: _load),
               if (s == null && _error == null) const LinearProgressIndicator(),
               if (s != null) ...[
@@ -151,4 +153,102 @@ class _StatGrid extends StatelessWidget {
       );
     });
   }
+}
+
+
+/// Kill switch. Everyone sees when the agents are paused; only admins (@rajkumar.codes) can pause or resume.
+class AgentControlCard extends StatelessWidget {
+  const AgentControlCard({super.key});
+
+  Future<void> _set(BuildContext context, bool paused) async {
+    if (paused) {
+      final ok = await showDialog<bool>(
+        context: context,
+        builder: (ctx) => AlertDialog(
+          title: const Text('Pause all agents?'),
+          content: const Text('The running agents stop at their next step (usually within a minute) and scheduled '
+              'runs are skipped until you resume. Nothing is lost – work continues where it stopped.'),
+          actions: [
+            TextButton(onPressed: () => Navigator.pop(ctx, false), child: const Text('Cancel')),
+            FilledButton(onPressed: () => Navigator.pop(ctx, true), child: const Text('Pause agents')),
+          ],
+        ),
+      );
+      if (ok != true) return;
+    }
+    try {
+      await Api.setAgentsPaused(paused);
+      if (context.mounted) toast(context, paused ? 'Agents paused' : 'Agents resumed – they continue on the next run');
+    } catch (e) {
+      if (context.mounted) toast(context, 'Could not change: $e');
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) => StreamBuilder<AgentControl?>(
+        stream: Api.controlStream(),
+        builder: (context, snap) {
+          final control = snap.data;
+          if (snap.hasError || control == null) return const SizedBox.shrink(); // migration 005 not applied yet
+          final admin = Api.isAdmin;
+          if (!control.paused && !admin) return const SizedBox.shrink();
+          final theme = Theme.of(context);
+          return Padding(
+            padding: const EdgeInsets.only(bottom: 16),
+            child: Card(
+              color: control.paused ? Colors.orange.withValues(alpha: 0.15) : null,
+              child: ListTile(
+                leading: Icon(control.paused ? Icons.pause_circle : Icons.play_circle,
+                    color: control.paused ? Colors.orange : Colors.green, size: 32),
+                title: Text(control.paused ? 'Agents are paused' : 'Agents are running'),
+                subtitle: Text(control.paused
+                    ? 'Paused${control.changedBy != null ? ' by ${control.changedBy}' : ''}'
+                        '${control.changedAt != null ? ' · ${ago(control.changedAt!)}' : ''}. No runs until resumed.'
+                    : 'Admin: pause stops every agent at its next step and skips scheduled runs.'),
+                trailing: admin
+                    ? (control.paused
+                        ? FilledButton.icon(
+                            onPressed: () => _set(context, false),
+                            icon: const Icon(Icons.play_arrow),
+                            label: const Text('Resume'),
+                          )
+                        : OutlinedButton.icon(
+                            style: OutlinedButton.styleFrom(foregroundColor: theme.colorScheme.error),
+                            onPressed: () => _set(context, true),
+                            icon: const Icon(Icons.pause),
+                            label: const Text('Pause all'),
+                          ))
+                    : null,
+              ),
+            ),
+          );
+        },
+      );
+}
+
+class _CurrentBatchCard extends StatelessWidget {
+  const _CurrentBatchCard();
+
+  @override
+  Widget build(BuildContext context) => StreamBuilder<List<Batch>>(
+        stream: Api.batchesStream(),
+        builder: (context, snap) {
+          final batches = [...(snap.data ?? <Batch>[])]..sort((a, b) => b.number.compareTo(a.number));
+          if (batches.isEmpty) return const SizedBox.shrink();
+          final b = batches.first;
+          return Padding(
+            padding: const EdgeInsets.only(bottom: 16),
+            child: Card(
+              child: ListTile(
+                leading: CircleAvatar(child: Text('#${b.number}', style: const TextStyle(fontSize: 12))),
+                title: Text(b.done ? 'Batch #${b.number} finished' : 'Batch #${b.number}: ${b.stageLabel.toLowerCase()}'),
+                subtitle: Text('${b.jobCount} jobs · started ${ago(b.createdAt)}'
+                    '${b.done ? ' · the next batch starts on the next run' : ''}'),
+                trailing: const Icon(Icons.chevron_right),
+                onTap: () => context.go('/jobs'),
+              ),
+            ),
+          );
+        },
+      );
 }

@@ -53,7 +53,9 @@ def from_description(text: str) -> dict | None:
 
 
 def run(run: db.PipelineRun, job: dict) -> None:
-    if job["salary_text"] != NA:
+    """Fill in a missing salary once per job (JD → web estimate → Adzuna estimate → NA)."""
+    meta = job.get("meta") or {}
+    if job["salary_text"] != NA or meta.get("salary_checked"):
         return
     with run.agent("salary", job["job_id"], "Looking for salary") as task:
         found = from_description(job["description"])
@@ -72,15 +74,14 @@ def run(run: db.PipelineRun, job: dict) -> None:
                     "salary_text": format_salary(data.get("min"), data.get("max"), data.get("currency") or NA, data.get("period") or NA)
                                    + f" (est. {site}, {data.get('basis') or 'similar roles'})",
                     "salary_source": f"estimate:{site}",
-                    "meta": {**(job.get("meta") or {}), "salary_sources": sources[:5], "salary_url": data.get("url")},
+                    "meta": {**meta, "salary_sources": sources[:5], "salary_url": data.get("url")},
                 }
         if not found and (est := (job.get("meta") or {}).get("adzuna_estimate")):
             found = {"salary_min": est["min"], "salary_max": est["max"], "salary_currency": est["currency"],
                      "salary_text": format_salary(est["min"], est["max"], est["currency"], "year") + " (est. Adzuna)",
                      "salary_source": "estimate:adzuna"}
-        if found:
-            db.update_job(job["job_id"], found)
-            job.update(found)
-            task.message = f"Salary: {found['salary_text']}"
-        else:
-            task.message = "Salary not available – stored as NA"
+        found = found or {}
+        found["meta"] = {**found.get("meta", meta), "salary_checked": True}  # don't look again next run
+        db.update_job(job["job_id"], found)
+        job.update(found)
+        task.message = f"Salary: {found['salary_text']}" if "salary_text" in found else "Salary not available – stored as NA"

@@ -188,6 +188,11 @@ class _SettingsScreenState extends State<SettingsScreen> {
                         onChanged: (v) => _set('target_ats', v),
                       ),
                       _SliderRow(
+                        label: 'Jobs per batch',
+                        value: ((s['batch_size'] as num?) ?? 20).toInt(), min: 5, max: 30, suffix: '',
+                        onChanged: (v) => _set('batch_size', v),
+                      ),
+                      _SliderRow(
                         label: 'Jobs fully processed per hourly run',
                         value: (s['max_jobs_per_run'] as num).toInt(), min: 1, max: 10, suffix: '',
                         onChanged: (v) => _set('max_jobs_per_run', v),

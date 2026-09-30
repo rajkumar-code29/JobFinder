@@ -42,6 +42,36 @@ class Job {
       .toList();
 
   bool get isReady => status == 'ready' || status == 'applied';
+  bool get isApplied => status == 'applied';
+  String? get batchId => raw['batch_id'] as String?;
+  int? get batchRank => raw['batch_rank'] as int?;
+}
+
+class Batch {
+  Batch(this.raw);
+  final Map<String, dynamic> raw;
+  String get id => raw['id'] as String;
+  int get number => raw['number'] as int;
+  String get status => raw['status'] as String;
+  String get stage => raw['stage'] as String? ?? 'salary';
+  int get jobCount => raw['job_count'] as int? ?? 0;
+  DateTime get createdAt => DateTime.parse(raw['created_at'] as String).toLocal();
+  bool get done => status == 'done';
+
+  String get stageLabel => switch (stage) {
+        'salary' => 'Checking salaries',
+        'scoring' => 'Scoring & ranking',
+        'tailoring' => 'Tailoring resumes',
+        _ => 'Finished',
+      };
+}
+
+class AgentControl {
+  AgentControl(this.raw);
+  final Map<String, dynamic> raw;
+  bool get paused => raw['paused'] == true;
+  String? get changedBy => raw['changed_by'] as String?;
+  DateTime? get changedAt => raw['changed_at'] == null ? null : DateTime.parse(raw['changed_at'] as String).toLocal();
 }
 
 class AddedSkill {

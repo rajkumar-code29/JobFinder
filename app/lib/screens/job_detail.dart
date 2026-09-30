@@ -7,6 +7,7 @@ import '../api.dart';
 import '../countries.dart';
 import '../models.dart';
 import '../widgets/common.dart';
+import 'jobs.dart' show confirmDeleteJob;
 
 class JobDetailScreen extends StatefulWidget {
   const JobDetailScreen({super.key, required this.jobId});
@@ -36,6 +37,14 @@ class _JobDetailScreenState extends State<JobDetailScreen> {
                   icon: const Icon(Icons.open_in_new),
                   onPressed: () => launchUrl(Uri.parse(job.url), mode: LaunchMode.externalApplication),
                 ),
+              if (job != null)
+                IconButton(
+                  tooltip: 'Delete job',
+                  icon: const Icon(Icons.delete_outline),
+                  onPressed: () async {
+                    if (await confirmDeleteJob(context, job) && context.mounted) context.go('/jobs');
+                  },
+                ),
             ],
           ),
           body: snap.hasError
@@ -61,7 +70,15 @@ class _Body extends StatelessWidget {
       PageBody(
         maxWidth: 900,
         child: Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
-          Row(children: [StatusChip(job.status), const Spacer(), Text('Found ${ago(job.createdAt)}', style: theme.textTheme.bodySmall)]),
+          Row(children: [
+            StatusChip(job.status),
+            if (job.batchRank != null) ...[
+              const SizedBox(width: 8),
+              Text('Rank #${job.batchRank} in its batch', style: theme.textTheme.bodySmall),
+            ],
+            const Spacer(),
+            Text('Found ${ago(job.createdAt)}', style: theme.textTheme.bodySmall),
+          ]),
           const SizedBox(height: 8),
           Text(job.title, style: theme.textTheme.headlineSmall?.copyWith(fontWeight: FontWeight.w700)),
           const SizedBox(height: 4),

@@ -35,7 +35,14 @@ jobs:
           GH_DISPATCH_TOKEN: ${{ secrets.GH_DISPATCH_TOKEN }}
         run: |
           set -o pipefail
-          npx --yes wrangler@4 deploy --var GITHUB_REPO:${{ github.repository }} 2>&1 | tee /tmp/deploy.log \
-            || { echo "::error::Wrangler: $(grep -iE 'error|✘' /tmp/deploy.log | tail -4 | tr '\n' ' ')"; exit 1; }
-          printf '%s' "$GH_DISPATCH_TOKEN" | npx --yes wrangler@4 secret put GH_DISPATCH_TOKEN 2>&1 | tail -2
+          export NO_COLOR=1 FORCE_COLOR=0
+          # Turn wrangler's error block (without colour codes) into one readable annotation.
+          explain() { sed -E 's/\x1b\[[0-9;]*m//g' "$1" | grep -A8 -E "ERROR|✘" | grep -vE "^\s*$|telemetry|Logs were written" | head -12 | tr '\n' ' '; }
+          if ! npx --yes wrangler@4 deploy --var GITHUB_REPO:${{ github.repository }} > /tmp/deploy.log 2>&1; then
+            cat /tmp/deploy.log; echo "::error::wrangler deploy: $(explain /tmp/deploy.log)"; exit 1
+          fi
+          cat /tmp/deploy.log
+          if ! printf '%s' "$GH_DISPATCH_TOKEN" | npx --yes wrangler@4 secret put GH_DISPATCH_TOKEN > /tmp/secret.log 2>&1; then
+            cat /tmp/secret.log; echo "::error::wrangler secret put: $(explain /tmp/secret.log)"; exit 1
+          fi
           echo "::notice::jobfinder-scheduler deployed – it starts 'Job agents' every hour at :07 UTC"

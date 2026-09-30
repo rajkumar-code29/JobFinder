@@ -1,5 +1,8 @@
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
+
+import '../auth_links.dart';
 
 class LoginScreen extends StatefulWidget {
   const LoginScreen({super.key});
@@ -12,7 +15,34 @@ class _LoginScreenState extends State<LoginScreen> {
   final _email = TextEditingController();
   final _password = TextEditingController();
   bool _busy = false;
-  String? _error;
+  String? _error = AuthLinks.linkError == null
+      ? null
+      : 'That email link didn\'t work (${AuthLinks.linkError}). Links can only be used once and expire after a day. '
+          'Enter your email and tap "Forgot password?" to get a fresh one.';
+  String? _info;
+
+  void _show({String? error, String? info}) => setState(() {
+        _error = error;
+        _info = info;
+      });
+
+  Future<void> _forgotPassword() async {
+    final email = _email.text.trim();
+    if (!email.contains('@')) {
+      _show(error: 'Enter your email above first');
+      return;
+    }
+    setState(() => _busy = true);
+    try {
+      // On the web, come back to this site; on the phone app, Supabase uses the site URL (the web app).
+      await Supabase.instance.client.auth.resetPasswordForEmail(email, redirectTo: kIsWeb ? Uri.base.origin : null);
+      _show(info: 'If $email has an account, a link to set a new password is on its way. Check spam too.');
+    } on AuthException catch (e) {
+      _show(error: e.message);
+    } finally {
+      if (mounted) setState(() => _busy = false);
+    }
+  }
 
   Future<void> _signIn() async {
     setState(() {
@@ -65,6 +95,10 @@ class _LoginScreenState extends State<LoginScreen> {
                   const SizedBox(height: 12),
                   Text(_error!, style: TextStyle(color: theme.colorScheme.error)),
                 ],
+                if (_info != null) ...[
+                  const SizedBox(height: 12),
+                  Text(_info!, style: TextStyle(color: theme.colorScheme.primary)),
+                ],
                 const SizedBox(height: 20),
                 FilledButton(
                   onPressed: _busy ? null : _signIn,
@@ -73,6 +107,8 @@ class _LoginScreenState extends State<LoginScreen> {
                       ? const SizedBox(height: 20, width: 20, child: CircularProgressIndicator(strokeWidth: 2))
                       : const Text('Sign in'),
                 ),
+                const SizedBox(height: 8),
+                TextButton(onPressed: _busy ? null : _forgotPassword, child: const Text('Forgot password?')),
               ]),
             ),
           ),

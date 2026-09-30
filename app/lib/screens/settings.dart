@@ -2,6 +2,7 @@ import 'dart:typed_data';
 
 import 'package:file_picker/file_picker.dart';
 import 'package:flutter/material.dart';
+import 'package:go_router/go_router.dart';
 import 'package:intl/intl.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 
@@ -83,6 +84,11 @@ class _SettingsScreenState extends State<SettingsScreen> {
     final s = _s;
     return Scaffold(
       appBar: AppBar(title: const Text('Settings'), actions: [
+        IconButton(
+          tooltip: 'Change password',
+          icon: const Icon(Icons.password),
+          onPressed: () => context.push('/set-password'),
+        ),
         IconButton(
           tooltip: 'Sign out',
           icon: const Icon(Icons.logout),

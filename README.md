@@ -54,7 +54,9 @@ Every captured job gets its own folder `jobs/<job_id>/`:
    - Project URL: **Project Settings → Data API** (`https://<ref>.supabase.co`) → `SUPABASE_URL`
    - Publishable key `sb_publishable_…` (or legacy `anon`): **Project Settings → API Keys** → `SUPABASE_ANON_KEY` (app)
    - Secret key `sb_secret_…` (or legacy `service_role`): same page → `SUPABASE_SERVICE_ROLE_KEY` (agents only, keep private)
-6. Later, once the domain is live: **Authentication → URL Configuration** → Site URL `https://jobs.<your-domain>`.
+6. Once the domain is live: **Authentication → URL Configuration** → Site URL `https://jobs.<your-domain>` and add
+   `https://jobs.<your-domain>/**` under Redirect URLs. **Required for invites and password resets**. Until it's set,
+   email links open `http://localhost:3000`.
 
 ### 2. API keys
 - Gemini: <https://aistudio.google.com/apikey>
@@ -119,8 +121,10 @@ You can also open `https://jobs.<your-domain>` in Safari → Share → **Add to 
 Supabase row-level security, and files live under `parent/<user-id>/…` and `jobs/<user-id>/<job-id>/…`.
 As the Supabase project owner you can still see everything in the Supabase dashboard.
 
-**Add a user:** Supabase → Authentication → Users → Add user (tick *Auto Confirm User*). Their settings are
-created automatically. They sign in, upload their resume in Settings, and add their own API keys.
+**Add a user:** Supabase → Authentication → Users → **Invite user** (they get an email, open the link, and the app asks
+them to choose a password), or **Add user → Create new user** with a password you give them. Their settings are created
+automatically; they then upload their resume and add their own API keys in Settings. Anyone can use
+**Forgot password?** on the login screen. Supabase's built-in email sender only allows a few emails per hour.
 
 **Limits are per user:**
 - Each user's agents use **their own keys first**. The shared keys (GitHub secrets) are only used for the owner,

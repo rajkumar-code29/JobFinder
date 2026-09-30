@@ -5,6 +5,7 @@ import 'package:flutter_web_plugins/url_strategy.dart';
 import 'package:go_router/go_router.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 
+import 'auth_links.dart';
 import 'config.dart';
 import 'screens/agents.dart';
 import 'screens/home.dart';
@@ -12,6 +13,7 @@ import 'screens/interview.dart';
 import 'screens/job_detail.dart';
 import 'screens/jobs.dart';
 import 'screens/login.dart';
+import 'screens/set_password.dart';
 import 'screens/settings.dart';
 import 'widgets/shell.dart';
 
@@ -22,13 +24,24 @@ Future<void> main() async {
     runApp(const _MissingConfig());
     return;
   }
-  await Supabase.initialize(url: AppConfig.supabaseUrl, publishableKey: AppConfig.supabaseAnonKey);
+  AuthLinks.captureInitialUrl();
+  await Supabase.initialize(
+    url: AppConfig.supabaseUrl,
+    publishableKey: AppConfig.supabaseAnonKey,
+    // Implicit links carry the session in the link itself, so an invite/reset email opened on a
+    // different device than the one that requested it still works.
+    authOptions: const FlutterAuthClientOptions(authFlowType: AuthFlowType.implicit),
+  );
   runApp(JobFinderApp());
 }
 
 class _AuthNotifier extends ChangeNotifier {
   _AuthNotifier() {
-    _sub = Supabase.instance.client.auth.onAuthStateChange.listen((_) => notifyListeners());
+    _sub = Supabase.instance.client.auth.onAuthStateChange.listen((state) {
+      if (state.event == AuthChangeEvent.passwordRecovery) AuthLinks.needsPassword.value = true;
+      if (state.event == AuthChangeEvent.signedOut) AuthLinks.needsPassword.value = false;
+      notifyListeners();
+    });
   }
   late final StreamSubscription _sub;
 
@@ -45,16 +58,19 @@ class JobFinderApp extends StatelessWidget {
   final _auth = _AuthNotifier();
 
   late final _router = GoRouter(
-    refreshListenable: _auth,
+    refreshListenable: Listenable.merge([_auth, AuthLinks.needsPassword]),
     redirect: (context, state) {
       final signedIn = Supabase.instance.client.auth.currentSession != null;
-      final atLogin = state.matchedLocation == '/login';
-      if (!signedIn) return atLogin ? null : '/login';
-      if (atLogin) return '/';
+      final loc = state.matchedLocation;
+      if (!signedIn) return loc == '/login' ? null : '/login';
+      // Arrived from an invite or password-reset link: choose a password first.
+      if (AuthLinks.needsPassword.value && loc != '/set-password') return '/set-password';
+      if (loc == '/login') return '/';
       return null;
     },
     routes: [
       GoRoute(path: '/login', builder: (_, _) => const LoginScreen()),
+      GoRoute(path: '/set-password', builder: (_, _) => const SetPasswordScreen()),
       ShellRoute(
         builder: (context, state, child) => AppShell(location: state.matchedLocation, child: child),
         routes: [

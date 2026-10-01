@@ -87,7 +87,7 @@ cd app && cp env.example.json env.json   # fill in
 flutter build ios --release --dart-define-from-file=env.json
 ```
 Then install with Xcode or `xcrun devicectl device install app`. Keep the repo outside iCloud-synced folders,
-because iCloud offloads files and breaks code signing. There are export options for TestFlight in `app/ios/`.
+because iCloud offloads files and breaks code signing. To ship a TestFlight build: `cd app && ./tool/testflight.sh`.
 
 ## Other users
 

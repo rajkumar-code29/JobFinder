@@ -1,4 +1,4 @@
-// All ISO 3166 countries (common names) + search aliases. Mirrors agents/jobfinder/sources/countries.py.
+// Same data as agents/jobfinder/sources/countries.py.
 
 const countryNames = <String, String>{
   'af': 'Afghanistan',
@@ -252,7 +252,7 @@ const countryNames = <String, String>{
   'ax': 'Åland Islands',
 };
 
-/// Extra words that find a country in search ("uk" → United Kingdom, "dubai" → UAE).
+/// Search aliases ("uk", "dubai", ...).
 const countryAliases = <String, List<String>>{
   'us': ['usa', 'u.s.', 'u.s.a.', 'united states of america', 'america', 'alabama', 'alaska', 'arizona', 'arkansas', 'california', 'colorado', 'connecticut', 'delaware', 'florida', 'hawaii', 'idaho', 'illinois', 'indiana', 'iowa', 'kansas', 'kentucky', 'louisiana', 'maine', 'maryland', 'massachusetts', 'michigan', 'minnesota', 'mississippi', 'missouri', 'montana', 'nebraska', 'nevada', 'new hampshire', 'new jersey', 'new mexico', 'new york', 'north carolina', 'north dakota', 'ohio', 'oklahoma', 'oregon', 'pennsylvania', 'rhode island', 'south carolina', 'south dakota', 'tennessee', 'texas', 'utah', 'vermont', 'virginia', 'washington', 'west virginia', 'wisconsin', 'wyoming', 'district of columbia', 'san francisco', 'seattle', 'austin', 'boston', 'chicago', 'los angeles', 'denver', 'atlanta', 'miami', 'nyc'],
   'gb': ['uk', 'u.k.', 'great britain', 'britain', 'england', 'scotland', 'wales', 'northern ireland', 'london', 'manchester', 'edinburgh', 'birmingham', 'bristol', 'cambridge', 'oxford', 'leeds', 'glasgow'],
@@ -315,10 +315,10 @@ const countryAliases = <String, List<String>>{
   'bh': ['manama'],
 };
 
-/// Display name for a saved location: ISO codes show the country name, custom locations show as typed.
+/// Country name for a code, or the custom text.
 String locationLabel(String value) => countryNames[value] ?? value;
 
-/// Normalise what a user picked/typed: ISO codes, country names and aliases become a lower-case code.
+/// Names and aliases -> ISO code; anything else stays as typed.
 String normalizeLocation(String value) {
   final v = value.trim();
   final low = v.toLowerCase();

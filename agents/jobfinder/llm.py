@@ -1,12 +1,11 @@
-"""AI layer for all agents: per-agent model routing across providers (Gemini natively, Groq/OpenRouter via
-OpenAI-compatible APIs), per-user key pools with fallback, pacing, a circuit breaker, kill-switch checks,
-a per-user call budget and per-model statistics for the scorecard.
+"""LLM calls for all agents.
 
-Routing: each agent has an ordered list of model specs (admin → Models → Routing), e.g.
-    tailor: ["gemini:flash", "gemini:flash-lite"]      scout: ["groq:openai/gpt-oss-120b", "gemini:flash-lite"]
-"gemini:flash" / "gemini:flash-lite" expand to every available model of that family, newest first (each has its
-own free daily allowance). Web-search work (salary, search) can only use Gemini (Google Search grounding).
-Call `activate()` before processing each user.
+Each agent has an ordered list of models (see DEFAULT_ROUTING, editable in the app). "gemini:flash" and
+"gemini:flash-lite" expand to every model of that family the key can use, newest first. Salary and search
+need Google Search grounding, so they only use Gemini.
+
+Also handles key fallback, pacing, the 429 circuit breaker, the kill switch, the per-user call budget and
+the scorecard counters. Call activate() before each user.
 """
 from __future__ import annotations
 
@@ -28,7 +27,7 @@ log = logging.getLogger("jobfinder")
 
 
 class StopUser(RuntimeError):
-    """Stop AI work for the current user this run; queued jobs continue next run."""
+    """Stop LLM work for this user for the rest of the run."""
 
 
 class BudgetExceeded(StopUser):
@@ -44,20 +43,20 @@ class ModelUnavailable(StopUser):
 
 
 class RateLimited(StopUser):
-    """Circuit breaker tripped: a provider keeps saying 'too many requests'. Stop, don't hammer the account."""
+    """Too many 429s in this run."""
 
 
 class Paused(StopUser):
-    """An admin switched the agents off (kill switch): stop everything at the next step."""
+    """Kill switch is on."""
 
 
 class SearchUnavailable(RuntimeError):
-    """Google-grounded search is being rate-limited: skip search for the rest of the run (other work continues)."""
+    """Grounded search keeps getting 429s; skip it for the rest of the run."""
 
 
-# ---------------------------------------------------------------------------------------------- routing
+# routing
 AGENTS = ("profile", "scout", "salary", "search", "scorer", "tailor", "coach", "writer")
-SEARCH_AGENTS = ("salary", "search")  # need Google Search grounding → Gemini only
+SEARCH_AGENTS = ("salary", "search")  # grounding, Gemini only
 DEFAULT_ROUTING = {
     "profile": ["gemini:flash", "gemini:flash-lite"],
     "scout": ["gemini:flash-lite"],
@@ -68,14 +67,14 @@ DEFAULT_ROUTING = {
     "coach": ["gemini:flash", "gemini:flash-lite"],
     "writer": ["gemini:flash", "gemini:flash-lite"],
 }
-# Room for the answer. Interview packs are long (~10k tokens); a cut-off answer is broken JSON.
+# Interview packs run to ~10k tokens; anything shorter cuts the JSON off.
 MAX_OUTPUT_TOKENS = {"coach": 32768, "tailor": 16384, "profile": 8192, "scorer": 8192}
 DEFAULT_OUTPUT_TOKENS = 8192
 _routing: dict[str, list[str]] = dict(DEFAULT_ROUTING)
 
 
 def set_routing(routing: dict[str, list[str]] | None) -> None:
-    """Admin-configured routing (missing agents keep the defaults)."""
+    """Routing from the DB; agents without a row keep the defaults."""
     global _routing
     _routing = {**DEFAULT_ROUTING, **{a: list(c) for a, c in (routing or {}).items() if c}}
 
@@ -84,46 +83,46 @@ def routing() -> dict[str, list[str]]:
     return dict(_routing)
 
 
-# ---------------------------------------------------------------------------------------------- state
+# state
 _pools: dict[str, KeyPool] = {}
 _budget = 0
 calls_made = 0
-last_model: str | None = None  # "provider:model" that answered the most recent successful call
+last_model: str | None = None  # provider:model of the last successful call
 _clients: dict[str, genai.Client] = {}
-_next_ok: dict[str, float] = {}   # "<key>:<model>" -> monotonic time of the next allowed call
-_interval: dict[str, float] = {}  # "<key>:<model>" -> seconds between calls; grows on per-minute rejections
+_next_ok: dict[str, float] = {}   # key:model -> earliest next call (monotonic)
+_interval: dict[str, float] = {}  # key:model -> gap between calls, doubled on 429
 
-# Google retires model versions ("…is no longer available…"): discover what exists and switch.
+# Google retires models without much warning, so we list what exists and swap.
 _replacements: dict[str, str] = {}
-_retired: set[str] = set()        # "provider:model"
-notices: list[str] = []           # surfaced in the run log by the pipeline
+_retired: set[str] = set()
+notices: list[str] = []           # copied into the run log
 _fallbacks_noted: set[tuple[str, str]] = set()
 _MODEL_NAME = re.compile(r"^gemini-(\d+(?:\.\d+)?)-(flash-lite|flash|pro)(?:-(.+))?$")
 _SPECIAL = re.compile(r"tts|image|audio|live|transcribe|robotics|native|embedding|computer", re.I)
 _discovered: dict[str, list[str]] | None = None
 FALLBACK_MODELS = {"flash": ["gemini-3.5-flash"], "flash-lite": ["gemini-3.5-flash-lite"]}
 
-# Circuit breaker. Only per-minute style rejections count: daily-limit / "limit: 0" answers park the key.
-MAX_CONSECUTIVE_REJECTIONS = 4   # in a row without any success
+# Breaker: only per-minute 429s count. Daily limits just park the key.
+MAX_CONSECUTIVE_REJECTIONS = 4
 MAX_REJECTIONS_PER_RUN = 12
-MAX_SEARCH_REJECTIONS = 2        # Google-grounded search gives up sooner; it's optional
+MAX_SEARCH_REJECTIONS = 2        # search is optional, give up early
 BREAKER_PAUSE = timedelta(hours=1)
-MAX_WAIT_PER_CALL = 90           # seconds one request may spend waiting out per-minute limits
+MAX_WAIT_PER_CALL = 90           # seconds
 MAX_WAIT_PER_SEARCH = 30
 OVERLOAD_PAUSE = 300
 _rejections = _consecutive = _search_rejections = 0
 _rejected_keys: dict[str, tuple[KeyPool, object]] = {}
 _search_disabled = False
 _on_event = None
-_should_stop = lambda: False  # noqa: E731 – replaced per run with the kill-switch check
-_overloaded: dict[str, float] = {}  # "provider:model" -> monotonic time until which it goes to the back
+_should_stop = lambda: False  # noqa: E731 - set per run to control.paused
+_overloaded: dict[str, float] = {}  # provider:model -> pushed to the back until (monotonic)
 
-# Scorecard: per (agent, "provider:model") counters, flushed by the pipeline after each user.
+# Scorecard counters per (agent, provider:model), flushed after each user.
 _stats: dict[tuple[str, str], Counter] = {}
 
 
 def activate(pools: dict[str, KeyPool] | KeyPool, budget: int, on_event=None, should_stop=None) -> None:
-    """Start a user's turn: their key pools, budget and breaker. Notices are per user, so they reset too."""
+    """Reset per-user state (pools, budget, breaker, notices)."""
     global _pools, _budget, calls_made, _rejections, _consecutive, _search_rejections, _search_disabled
     global _on_event, _should_stop, last_model
     _pools = pools if isinstance(pools, dict) else {"gemini": pools}
@@ -138,7 +137,7 @@ def activate(pools: dict[str, KeyPool] | KeyPool, budget: int, on_event=None, sh
 
 
 def take_stats() -> list[dict]:
-    """Counters since the last call, for db.record_model_stats()."""
+    """Return and clear the scorecard counters."""
     rows = [{"agent": a, "model": m, **dict(c)} for (a, m), c in _stats.items()]
     _stats.clear()
     return rows
@@ -165,14 +164,14 @@ def _add_notice(note: str) -> None:
         log.warning(note)
 
 
-# ---------------------------------------------------------------------------------------------- Gemini models
+# Gemini models
 def _family(name: str) -> str | None:
     m = _MODEL_NAME.match(name)
     return m.group(2) if m else None
 
 
 def _rank(name: str) -> tuple:
-    """Stable before preview/dated variants, then newest version first."""
+    """Sort key: stable before preview, then newest."""
     m = _MODEL_NAME.match(name)
     suffix = m.group(3) or ""
     return (suffix in ("", "latest"), float(m.group(1)), suffix == "")
@@ -185,7 +184,7 @@ def _client(key) -> genai.Client:
 
 
 def _discover(key) -> dict[str, list[str]]:
-    """Gemini text models this key can call, per family, best first. One cheap list call per run."""
+    """Gemini text models per family, best first. Listed once per run."""
     global _discovered
     if _discovered is None:
         found: dict[str, list[str]] = {"flash": [], "flash-lite": []}
@@ -199,7 +198,7 @@ def _discover(key) -> dict[str, list[str]]:
             log.warning("could not list Gemini models (%s); using defaults", exc)
         for family, names in found.items():
             names.sort(key=_rank, reverse=True)
-            if any(_rank(n)[0] for n in names):  # prefer stable models when there are any
+            if any(_rank(n)[0] for n in names):  # drop previews if there's a stable one
                 found[family] = [n for n in names if _rank(n)[0]]
         _discovered = found
     return _discovered
@@ -228,8 +227,7 @@ def _expand(spec: str) -> list[tuple[str, str]]:
 
 
 def build_chain(agent: str) -> list[tuple[str, str]]:
-    """(provider, model) pairs to try, in order, for an agent. Skips providers without keys, retired models and
-    (for web search) non-Gemini models; overloaded models go to the back for a few minutes."""
+    """Ordered (provider, model) pairs for an agent. Overloaded models go last for a few minutes."""
     chain: list[tuple[str, str]] = []
     for spec in _routing.get(agent) or DEFAULT_ROUTING.get(agent, ["gemini:flash"]):
         for provider, model in _expand(spec):
@@ -245,7 +243,7 @@ def build_chain(agent: str) -> list[tuple[str, str]]:
             + [p for p in chain if _overloaded.get(f"{p[0]}:{p[1]}", 0) > now])
 
 
-# ---------------------------------------------------------------------------------------------- pacing
+# pacing
 def _base_interval(provider: str, model: str) -> float:
     if provider == "gemini":
         if config.GEMINI_MIN_INTERVAL_SEC is not None:
@@ -263,7 +261,7 @@ def _pace(key, provider: str, model: str) -> None:
 
 
 def _after_success(key, provider: str, model: str, tokens: int | None) -> None:
-    """Token-per-minute limited providers (Groq free: 8k/min): wait long enough for the tokens just used."""
+    """Groq's free tier limits tokens per minute, so space calls by tokens used."""
     tpm = providers.OPENAI_COMPATIBLE.get(provider, {}).get("tokens_per_minute")
     if tpm and tokens:
         slot = f"{key.fingerprint}:{model}"
@@ -271,7 +269,7 @@ def _after_success(key, provider: str, model: str, tokens: int | None) -> None:
 
 
 def _slow_down(key, provider: str, model: str) -> None:
-    """Converge on the real per-minute limit by doubling the gap (max 60s)."""
+    """Double the gap after a 429, max 60s."""
     slot = f"{key.fingerprint}:{model}"
     _interval[slot] = min(60.0, max(_interval.get(slot, _base_interval(provider, model)) * 2, 12.0))
 
@@ -283,7 +281,7 @@ def _retry_delay(msg: str) -> float:
 
 
 def _reason(provider: str, code, msg: str) -> str:
-    """Short, human-readable version of the provider's error for the run log."""
+    """Short error text for the run log."""
     quota = re.search(r"quotaId['\"]?:\s*['\"]?([\w-]+)", msg) or re.search(r"metric:\s*[\w.-]*/([\w-]+)", msg)
     limit = re.search(r"limit:\s*(\d+)", msg, re.I)
     if provider == "gemini" and (quota or limit):
@@ -293,7 +291,8 @@ def _reason(provider: str, code, msg: str) -> str:
 
 
 def _classify(provider: str, code, msg: str, retry_after: float | None):
-    """→ (kind, detail): minute (seconds), day (until), limit0, overloaded, too_large, model_gone, invalid_key, other"""
+    """Returns (kind, detail). kind is one of minute, day, limit0, overloaded, too_large, model_gone,
+    invalid_key, other."""
     low = msg.lower()
     if code == 429:
         if re.search(r"limit:\s*0\b", msg):
@@ -317,7 +316,7 @@ def _classify(provider: str, code, msg: str, retry_after: float | None):
 
 
 def _rejected(pool: KeyPool, key, provider: str, model: str, reason: str, search: bool) -> None:
-    """Count a per-minute style rejection; trip the breaker when a provider keeps refusing."""
+    """Count a per-minute 429 and trip the breaker if there are too many."""
     global _rejections, _consecutive, _search_rejections, _search_disabled
     _rejections += 1
     _consecutive += 1
@@ -339,14 +338,14 @@ def _rejected(pool: KeyPool, key, provider: str, model: str, reason: str, search
             f"the accounts; the rejected keys are paused until {until:%H:%M} UTC.")
 
 
-# ---------------------------------------------------------------------------------------------- calls
+# calls
 def _call(provider: str, key, model: str, prompt: str, system: str | None, json_mode: bool, search: bool,
           temperature: float, max_tokens: int):
-    """One request. Returns (text, grounding sources, tokens)."""
+    """Single request -> (text, grounding sources, tokens)."""
     if provider == "gemini":
         cfg = types.GenerateContentConfig(system_instruction=system, temperature=temperature,
                                           max_output_tokens=max_tokens)
-        if search:  # grounding and JSON mime type can't be combined; JSON is parsed out of the text instead
+        if search:  # can't combine grounding with JSON mode
             cfg.tools = [types.Tool(google_search=types.GoogleSearch())]
         elif json_mode:
             cfg.response_mime_type = "application/json"
@@ -380,7 +379,7 @@ def _generate(prompt: str, *, agent: str, system: str | None, json_mode: bool, s
     chain = build_chain(agent)
     if not chain:
         raise KeysExhausted(f"No usable model for the {agent} agent: add an API key for its providers "
-                            f"(Settings → API keys) or change its routing")
+                            f"(Settings > API keys) or change its routing")
     deadline = time.monotonic() + (MAX_WAIT_PER_SEARCH if search else MAX_WAIT_PER_CALL)
     est_tokens = (len(prompt) + len(system or "")) // 4
     out_tokens = MAX_OUTPUT_TOKENS.get(agent, DEFAULT_OUTPUT_TOKENS)
@@ -392,12 +391,12 @@ def _generate(prompt: str, *, agent: str, system: str | None, json_mode: bool, s
         limit = providers.OPENAI_COMPATIBLE.get(provider, {}).get("max_request_tokens")
         max_tokens = out_tokens
         if limit:
-            if est_tokens + 512 > limit:  # the free tier would refuse it anyway: don't spend a request
+            if est_tokens + 512 > limit:  # would be refused anyway
                 _stat(agent, spec, too_large=1)
                 last_error = f"{providers.label(provider)}: request of ~{est_tokens} tokens exceeds its {limit}-token limit"
                 continue
             max_tokens = min(out_tokens, limit - est_tokens)
-        for _ in range(200):  # safety net; the deadline normally ends the loop
+        for _ in range(200):  # the deadline normally ends this first
             if _should_stop():
                 raise Paused("Agents paused by an admin")
             if calls_made >= _budget:
@@ -410,7 +409,7 @@ def _generate(prompt: str, *, agent: str, system: str | None, json_mode: bool, s
                     log.info("%s keys cooling down for %s, waiting %.0fs", providers.label(provider), model, wait)
                     time.sleep(wait + 1)
                     continue
-                break  # every key used up (or out of time) for this model: next model in the chain
+                break  # no key left for this model, try the next one
 
             _pace(key, provider, model)
             calls_made += 1
@@ -421,13 +420,13 @@ def _generate(prompt: str, *, agent: str, system: str | None, json_mode: bool, s
                 code = getattr(exc, "code", None)
                 msg = exc.message if isinstance(exc, providers.ProviderError) else str(exc)
                 kind, detail = _classify(provider, code, msg, getattr(exc, "retry_after", None))
-                calls_made -= 1  # rejected calls don't count against the budget
+                calls_made -= 1  # refused calls don't count
                 last_error = _reason(provider, code, msg)
                 if kind == "minute":
                     _stat(agent, spec, rate_limited=1)
                     pool.cool(key, model, detail)
                     _slow_down(key, provider, model)
-                    _rejected(pool, key, provider, model, last_error, search)  # may stop the run (breaker)
+                    _rejected(pool, key, provider, model, last_error, search)
                     continue
                 if kind in ("day", "limit0"):
                     _stat(agent, spec, rate_limited=1)
@@ -437,7 +436,7 @@ def _generate(prompt: str, *, agent: str, system: str | None, json_mode: bool, s
                     continue
                 if kind == "too_large":
                     _stat(agent, spec, too_large=1)
-                    break  # this model can't take a request this big: next model
+                    break
                 if kind == "model_gone":
                     _stat(agent, spec, errors=1)
                     _retired.add(spec)
@@ -463,7 +462,7 @@ def _generate(prompt: str, *, agent: str, system: str | None, json_mode: bool, s
                     break
                 _stat(agent, spec, errors=1)
                 raise
-            except Exception:  # network errors etc.
+            except Exception:
                 _stat(agent, spec, errors=1)
                 raise
             pool.used(key)
@@ -482,8 +481,7 @@ def _generate(prompt: str, *, agent: str, system: str | None, json_mode: bool, s
 
 
 def _parse_json(text: str):
-    """Strict JSON first; then the JSON inside a code fence or the outermost braces; then a tolerant repair
-    (missing commas, trailing commas, unescaped quotes, an answer cut short) before giving up."""
+    """Plain JSON, then a code fence / outer braces, then json_repair for sloppy or truncated output."""
     text = (text or "").strip()
     try:
         return json.loads(text)
@@ -515,11 +513,11 @@ def _strict_parts(text: str):
 
 
 def ask_json(prompt: str, *, agent: str, system: str | None = None, temperature: float = 0.3):
-    """JSON answer from the agent's routed models. Malformed JSON gets one retry with a stricter instruction."""
+    """Ask for JSON. Retries once if the reply can't be parsed."""
     text, _, spec = _generate(prompt, agent=agent, system=system, json_mode=True, search=False, temperature=temperature)
     try:
         return _parse_json(text)
-    except ValueError as exc:  # json.JSONDecodeError is a ValueError
+    except ValueError as exc:
         _stat(agent, spec, invalid_json=1)
         _event(f"{spec} returned invalid JSON ({exc}); retrying once")
         text, _, spec = _generate(prompt + "\n\nReturn ONLY valid JSON: double-quoted keys and strings, no comments, "
@@ -533,7 +531,7 @@ def ask_json(prompt: str, *, agent: str, system: str | None = None, temperature:
 
 
 def search_json(prompt: str, *, agent: str = "search", system: str | None = None) -> tuple[object, list[dict]]:
-    """Grounded with Google Search (Gemini). Returns (parsed_json, sources[{title, uri}])."""
+    """Google-grounded call. Returns (json, sources)."""
     text, sources, spec = _generate(prompt, agent=agent, system=system, json_mode=False, search=True, temperature=0.2)
     try:
         return _parse_json(text), sources

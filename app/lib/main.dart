@@ -31,8 +31,7 @@ Future<void> main() async {
   await Supabase.initialize(
     url: AppConfig.supabaseUrl,
     publishableKey: AppConfig.supabaseAnonKey,
-    // Implicit links carry the session in the link itself, so an invite/reset email opened on a
-    // different device than the one that requested it still works.
+    // implicit flow so reset/invite links work on a different device than the one that asked
     authOptions: const FlutterAuthClientOptions(authFlowType: AuthFlowType.implicit),
   );
   runApp(JobFinderApp());
@@ -66,7 +65,7 @@ class JobFinderApp extends StatelessWidget {
       final signedIn = Supabase.instance.client.auth.currentSession != null;
       final loc = state.matchedLocation;
       if (!signedIn) return loc == '/login' ? null : '/login';
-      // Arrived from an invite or password-reset link: choose a password first.
+      // came in from an invite/reset link
       if (AuthLinks.needsPassword.value && loc != '/set-password') return '/set-password';
       if (loc == '/login') return '/';
       return null;

@@ -45,7 +45,7 @@ class Job {
   bool get isApplied => status == 'applied';
   String? get batchId => raw['batch_id'] as String?;
 
-  /// Which model produced each agent's output, e.g. {'tailor': 'gemini:gemini-3.8-flash'}.
+  /// agent -> model that produced it
   Map<String, String> get models => ((raw['meta'] as Map?)?['models'] as Map? ?? {})
       .map((k, v) => MapEntry(k.toString(), v.toString()));
   int? get batchRank => raw['batch_rank'] as int?;
@@ -85,7 +85,7 @@ class SetupStatus {
   });
   final bool resumeDocx, aiKey, geminiKey, locations, roles, jobBoards, extraKeys, privacyAccepted, hasRun;
 
-  /// e.g. "No parent resume uploaded yet … Skipping this user." from the latest run
+  /// "Skipping this user" note from the last run, if any
   final String? waitingOn;
 
   bool get ready => resumeDocx && aiKey && locations && roles;

@@ -2,8 +2,7 @@ import 'dart:convert';
 
 import 'package:http/http.dart' as http;
 
-/// How to get each provider's key, and a quick live check run from this device (the key never goes through
-/// our database). Used by Settings → API keys → Add API key.
+/// Per-provider "how to get a key" steps and a live key test (runs on the device, not through the DB).
 class KeyGuide {
   const KeyGuide({required this.url, required this.steps, this.note, this.keyHint});
   final String url;
@@ -22,14 +21,14 @@ const keyGuides = {
       'Copy the key and paste it below, then tap Test.',
     ],
     note: 'Free and required: the agents use it for tailoring, interview prep, scoring and salary search. '
-        'Create it in your own Google account – keys from the same project share one free quota.',
+        'Create it in your own Google account - keys from the same project share one free quota.',
   ),
   'groq': KeyGuide(
     url: 'https://console.groq.com/keys',
     keyHint: 'starts with gsk_',
     steps: [
       'Open console.groq.com and sign up (free).',
-      'Go to API Keys → Create API Key, give it a name.',
+      'Go to API Keys > Create API Key, give it a name.',
       'Copy the key (it is shown only once) and paste it below.',
     ],
     note: 'Optional. Free tier ≈1,000 requests/day per model but only short prompts, so it helps the Scout '
@@ -38,7 +37,7 @@ const keyGuides = {
   'openrouter': KeyGuide(
     url: 'https://openrouter.ai/keys',
     keyHint: 'starts with sk-or-',
-    steps: ['Sign in at openrouter.ai.', 'Open Keys → Create key.', 'Copy it and paste it below.'],
+    steps: ['Sign in at openrouter.ai.', 'Open Keys > Create key.', 'Copy it and paste it below.'],
     note: 'Optional fallback. Free models allow about 50 requests a day.',
   ),
   'adzuna': KeyGuide(
@@ -78,7 +77,7 @@ String _error(http.Response r) {
   }
 }
 
-/// Live check of a key. Returns a friendly verdict.
+/// Quick check that a key works.
 Future<KeyTestResult> testKey(String provider, String key, {String? appId}) async {
   key = key.trim();
   try {
@@ -101,7 +100,7 @@ Future<KeyTestResult> testKey(String provider, String key, {String? appId}) asyn
         if (gen.statusCode == 429) {
           return KeyTestResult(false, gen.body.contains('limit: 0')
               ? 'Key is valid, but this project has no free-tier quota. Create the key in a Google account with the free tier.'
-              : 'Key is valid but its limit is used up right now – it will work again later.');
+              : 'Key is valid but its limit is used up right now - it will work again later.');
         }
         return KeyTestResult(false, 'Key is valid, but a test request failed: ${_error(gen)}');
       case 'groq':
@@ -125,13 +124,13 @@ Future<KeyTestResult> testKey(String provider, String key, {String? appId}) asyn
         final r = await http.get(Uri.parse('https://jsearch.p.rapidapi.com/search?query=developer&num_pages=1'),
             headers: {'X-RapidAPI-Key': key, 'X-RapidAPI-Host': 'jsearch.p.rapidapi.com'});
         if (r.statusCode == 200) return const KeyTestResult(true, 'Key works and is subscribed to JSearch.');
-        if (r.statusCode == 403) return const KeyTestResult(false, 'Key is valid but not subscribed to JSearch – subscribe to the free Basic plan.');
+        if (r.statusCode == 403) return const KeyTestResult(false, 'Key is valid but not subscribed to JSearch - subscribe to the free Basic plan.');
         return KeyTestResult(false, 'RapidAPI rejected the key (HTTP ${r.statusCode}): ${_error(r)}');
     }
     return const KeyTestResult(false, 'No test available for this provider.');
   } catch (e) {
-    // Browsers can block some providers' APIs from web pages (CORS); the phone app isn't affected.
+    // usually CORS on the web build
     return KeyTestResult(false, 'Couldn\'t reach the provider from here ($e). If you\'re on the web app, it may '
-        'block this test – the agents will still check the key on their next run.');
+        'block this test - the agents will still check the key on their next run.');
   }
 }

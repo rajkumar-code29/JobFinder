@@ -4,7 +4,7 @@ import 'package:supabase_flutter/supabase_flutter.dart';
 
 import '../auth_links.dart';
 
-/// Shown automatically after an invite / password-reset link, and from Settings → Change password.
+/// After an invite/reset link, or from Settings.
 class SetPasswordScreen extends StatefulWidget {
   const SetPasswordScreen({super.key});
 
@@ -40,7 +40,7 @@ class _SetPasswordScreenState extends State<SetPasswordScreen> {
       AuthLinks.needsPassword.value = false;
       if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Password saved')));
-      // New users go straight to Settings to upload their resume and add API keys.
+      // new users still need to set things up
       context.go(wasFirstTime ? '/settings' : '/');
     } on AuthException catch (e) {
       setState(() => _error = e.message);

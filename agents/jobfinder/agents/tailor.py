@@ -1,5 +1,5 @@
-"""Tailor agent: applies the Scorer's suggestions to a copy of the parent .docx (formatting preserved),
-re-scores, and iterates until the target ATS score or the pass limit. Saved under the parent's file name."""
+"""Edits a copy of the parent .docx using the scorer's suggestions, re-scores, repeats up to MAX_PASSES.
+The result keeps the parent's file name."""
 from __future__ import annotations
 
 import json
@@ -55,7 +55,7 @@ def _pass(doc_bytes: bytes, job: dict, rep: dict, target: int) -> tuple[bytes, d
 def run(run: db.PipelineRun, job: dict, profile: dict, report: dict, target: int) -> dict:
     with run.agent("tailor", job["job_id"], f"Tailoring resume (target {target}%)") as task:
         if not profile.get("resume_docx"):
-            raise RuntimeError("Tailoring needs a .docx parent resume – upload one in Settings")
+            raise RuntimeError("Tailoring needs a .docx parent resume - upload one in Settings")
         parent = db.download(profile["resume_docx"], db.PARENT_BUCKET)
 
         current, rep, added, changes, model = parent, report, [], [], None
@@ -80,7 +80,7 @@ def run(run: db.PipelineRun, job: dict, profile: dict, report: dict, target: int
         if pdf:
             files["resume_pdf"] = db.upload(f"{prefix}/{stem}.pdf", pdf, docs.PDF_MIME)
 
-        # dedupe added skills by name
+        # dedupe by skill name
         seen, unique_added = set(), []
         for a in added:
             key = str(a.get("skill", "")).lower()
@@ -92,8 +92,8 @@ def run(run: db.PipelineRun, job: dict, profile: dict, report: dict, target: int
         db.upload(f"{prefix}/tailored_report.json", json.dumps(tailored, indent=2, ensure_ascii=False).encode(), "application/json")
         md = scorer.report_markdown(job, report, tailored)
         if unique_added:
-            md += "\n## ⚠️ Adjacent skills added — review before applying\n" + "\n".join(
-                f"- **{a['skill']}** — {a.get('why', '')}" for a in unique_added) + "\n"
+            md += "\n## Adjacent skills added - review before applying\n" + "\n".join(
+                f"- **{a['skill']}** - {a.get('why', '')}" for a in unique_added) + "\n"
         if changes:
             md += "\n## Changes made\n" + "\n".join(f"- {c}" for c in changes) + "\n"
         db.upload(f"{prefix}/Suggestions Report.md", md.encode(), "text/markdown")
@@ -103,6 +103,6 @@ def run(run: db.PipelineRun, job: dict, profile: dict, report: dict, target: int
                   "files": files, "status": "tailored", "meta": db.model_meta(job, "tailor", model)}
         db.update_job(job["job_id"], values)
         job.update(values)
-        task.message = (f"Tailored in {passes} pass(es): ATS {job['ats_score']}% → {values['tailored_ats_score']}%"
+        task.message = (f"Tailored in {passes} pass(es): ATS {job['ats_score']}% -> {values['tailored_ats_score']}%"
                         + (f", {len(unique_added)} adjacent skill(s) to review" if unique_added else ""))
         return tailored

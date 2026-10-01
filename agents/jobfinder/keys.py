@@ -1,8 +1,7 @@
-"""API key pools with automatic fallback.
+"""Key pools with fallback.
 
-Keys are tried in order. When a key hits a limit it is parked until the provider resets it (remembered in the
-`key_state` table so later runs skip it), and the next key is used. Short per-minute limits only park a key
-in memory for the retry delay.
+A key that hits a daily/hard limit is parked in key_state until it resets; per-minute limits only cool it
+in memory. The next key in the pool is used meanwhile.
 """
 from __future__ import annotations
 
@@ -23,7 +22,7 @@ def utcnow() -> datetime:
 
 
 def next_pacific_midnight() -> datetime:
-    """Gemini daily quotas reset at midnight Pacific time."""
+    """Gemini quotas reset at midnight PT."""
     now = datetime.now(ZoneInfo("America/Los_Angeles"))
     return (now + timedelta(days=1)).replace(hour=0, minute=5, second=0, microsecond=0).astimezone(timezone.utc)
 
@@ -42,9 +41,9 @@ class Key:
     provider: str
     value: str
     app_id: str | None = None
-    row_id: str | None = None  # row in `table` that shows this key's status in the app
+    row_id: str | None = None  # row in `table`, for status in the app
     label: str = ""
-    table: str = "api_keys"    # api_keys (a user's own keys) or shared_api_keys (the owner's shared pool)
+    table: str = "api_keys"    # or shared_api_keys
 
     @property
     def fingerprint(self) -> str:
@@ -57,7 +56,7 @@ class Key:
 
 
 class KeyStateStore:
-    """Loads parked keys once per run and persists new parking decisions."""
+    """Parked keys, loaded once per run."""
 
     def __init__(self):
         rows = db.sb.table("key_state").select("id,exhausted_until").gt("exhausted_until", utcnow().isoformat()).execute().data
@@ -75,7 +74,7 @@ class KeyStateStore:
             "id": f"{key.fingerprint}:{scope}", "provider": key.provider,
             "exhausted_until": until.isoformat(), "last_error": error[:500], "updated_at": utcnow().isoformat(),
         }).execute()
-        if key.row_id:  # show it in the app (Settings → API keys / Shared keys)
+        if key.row_id:
             values = {"exhausted_until": until.isoformat(), "last_error": f"{scope}: {error}"[:500]}
             if key.table == "shared_api_keys":
                 values["in_use"] = False
@@ -83,7 +82,7 @@ class KeyStateStore:
         log.warning("%s %s parked until %s (%s)", key.provider, key.name, until.isoformat(timespec="minutes"), error)
 
     def touch(self, key: Key) -> None:
-        """First successful call with a key this run: record it (and, for shared keys, mark it as the one in use)."""
+        """Mark a key as used (once per run). Shared keys also get in_use."""
         if not key.row_id or key.row_id in self._touched:
             return
         self._touched.add(key.row_id)
@@ -118,7 +117,7 @@ class KeyPool:
         raise NoKeyAvailable(f"no {self.provider} key available for {scope}")
 
     def seconds_until_free(self, scope: str = "default") -> float | None:
-        """If every usable key is only cooling (per-minute limit), how long until the first frees up."""
+        """Seconds until a cooling key is usable again, or None."""
         now = utcnow()
         waits = [(self._cooling[f"{k.fingerprint}:{scope}"] - now).total_seconds()
                  for k in self.keys
@@ -140,11 +139,10 @@ AI_PROVIDERS = ("gemini", "groq", "openrouter")
 
 
 def shared_keys(store: KeyStateStore) -> dict[str, list[Key]]:
-    """The owner's shared pool, in the order set in the app (Settings → Shared keys).
+    """Shared pool in the order set in the app.
 
-    Keys from GitHub secrets are registered in shared_api_keys by fingerprint (value stays in GitHub) so the
-    app can show and reorder/disable them; keys added in the app are stored there directly. Falls back to the
-    GitHub-secret keys alone if the table doesn't exist yet (migration 004 not applied)."""
+    Env keys are registered in shared_api_keys by fingerprint only, so they can be reordered/disabled there.
+    Falls back to the env keys if the table isn't there (pre-004)."""
     from . import config
 
     env_keys = ([Key("gemini", k) for k in config.SHARED_GEMINI_KEYS]
@@ -162,10 +160,10 @@ def shared_keys(store: KeyStateStore) -> dict[str, list[Key]]:
         return {p: [k for k in env_keys if k.provider == p] for p in PROVIDERS}
 
     pools: dict[str, list[Key]] = {p: [] for p in PROVIDERS}
-    for r in rows:  # enabled rows, ordered by priority
+    for r in rows:
         if r["source"] == "github":
             env = by_fp.get(r["fingerprint"])
-            if env and r["provider"] in pools:  # a key removed from GitHub secrets simply disappears
+            if env and r["provider"] in pools:  # gone from secrets -> skip
                 pools[r["provider"]].append(Key(env.provider, env.value, env.app_id, r["id"], r["label"] or "GitHub secret", "shared_api_keys"))
         elif r.get("key_value") and r["provider"] in pools:
             pools[r["provider"]].append(Key(r["provider"], r["key_value"], r.get("app_id"), r["id"], r["label"] or "", "shared_api_keys"))
@@ -173,7 +171,7 @@ def shared_keys(store: KeyStateStore) -> dict[str, list[Key]]:
 
 
 def build_pools(account: dict, user_keys: list[dict], store: KeyStateStore, shared: dict[str, list[Key]]) -> dict[str, KeyPool]:
-    """User's own keys first (by priority), then the shared pool if the account may use it."""
+    """Own keys first, then the shared pool if allowed."""
     own = sorted(user_keys, key=lambda r: (r.get("priority") or 0, r.get("created_at") or ""))
     use_shared = account.get("use_shared_keys", False)
 

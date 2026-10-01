@@ -75,7 +75,7 @@ class _JobsScreenState extends State<JobsScreen> {
             final batches = [...(batchSnap.data ?? <Batch>[])]..sort((a, b) => b.number.compareTo(a.number));
             final visible = all.where(_match).toList();
 
-            // Sections: newest batch first, then jobs waiting for a batch, then jobs from before batches existed.
+            // batches (newest first), then waiting jobs, then pre-batch jobs
             final sections = <({String key, Widget header, List<Job> jobs})>[];
             for (final b in batches) {
               final inBatch = all.where((j) => j.batchId == b.id).toList();
@@ -90,7 +90,7 @@ class _JobsScreenState extends State<JobsScreen> {
                 header: _SimpleHeader(
                   icon: Icons.hourglass_empty,
                   title: 'Waiting for a batch',
-                  subtitle: '${waiting.length} relevant jobs – they join the next batch once the current one is done',
+                  subtitle: '${waiting.length} relevant jobs - they join the next batch once the current one is done',
                 ),
                 jobs: waiting,
               ));
@@ -141,7 +141,7 @@ class _JobsScreenState extends State<JobsScreen> {
                 if (sections.isEmpty)
                   const SliverFillRemaining(
                     hasScrollBody: false,
-                    child: Center(child: Text('No jobs here yet – the agents build a new batch every hour.')),
+                    child: Center(child: Text('No jobs here yet - the agents build a new batch every hour.')),
                   ),
                 for (final section in sections) ...[
                   SliverToBoxAdapter(
@@ -240,7 +240,7 @@ class _SimpleHeader extends StatelessWidget {
       ]);
 }
 
-/// Confirm, then delete a job (files + database). Returns true when deleted.
+/// Returns true if the job was deleted.
 Future<bool> confirmDeleteJob(BuildContext context, Job job) async {
   final ok = await showDialog<bool>(
     context: context,

@@ -15,7 +15,7 @@ jobs:
     steps:
       - uses: actions/checkout@v5
 
-      # Fail fast with a readable annotation if the Cloudflare secrets are wrong (no secret values are printed).
+      # check the Cloudflare secrets first so the error is readable
       - name: Check Cloudflare credentials
         working-directory: .
         env:
@@ -52,7 +52,7 @@ jobs:
           CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
         run: |
           set -o pipefail
-          # First run creates the project; afterwards this fails harmlessly with "already exists".
+          # fails with "already exists" after the first run, that's fine
           npx --yes wrangler@4 pages project create jobfinder --production-branch=main 2>&1 | tail -3 || true
           if ! npx --yes wrangler@4 pages deploy app/build/web --project-name=jobfinder --branch=main --commit-dirty=true 2>&1 | tee /tmp/deploy.log; then
             echo "::error::Wrangler: $(grep -iE 'error|✘|failed' /tmp/deploy.log | tail -6 | tr '\n' ' ')"

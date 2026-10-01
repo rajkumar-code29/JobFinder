@@ -1,12 +1,8 @@
-"""Batch workflow, per user:
+"""Batches.
 
-  1. Scout   – collect up to `batch_size` relevant jobs (full descriptions) → Batch #N. No new scanning while a
-               batch is still being processed.
-  2. Salary  – fill in missing salaries for every job in the batch.
-  3. Scorer  – ATS-score every job, then rank the batch (1 = highest score).
-  4. Tailor → Coach → Writer – one job at a time in rank order, until the whole batch is ready.
-
-Each stage resumes where it stopped, so a batch can span several hourly runs (free-tier limits, kill switch).
+Scout fills a batch (batch_size jobs), then: salary for all, score + rank all, then tailor/coach/writer one
+job at a time by rank. No new scan until the batch is done. Every stage picks up where it left off, so a
+batch usually spans a few runs.
 """
 from __future__ import annotations
 
@@ -35,7 +31,7 @@ def _failed(run: db.PipelineRun, job: dict, exc: Exception) -> None:
 
 
 def start(run: db.PipelineRun, settings: dict, profile: dict, brief: str, pools: dict, force_all: bool) -> dict | None:
-    """Form the next batch from relevant jobs already waiting, topping up with a fresh scan if needed."""
+    """New batch from waiting jobs, scanning for more if there aren't enough."""
     size = max(1, int(settings.get("batch_size") or 20))
     waiting = db.unbatched_jobs(run.user_id, size)
     if len(waiting) < size:
@@ -45,7 +41,7 @@ def start(run: db.PipelineRun, settings: dict, profile: dict, brief: str, pools:
             task.message = f"Scanned {run.scanned} postings, saved {stored} relevant jobs"
         waiting = db.unbatched_jobs(run.user_id, size)
     if not waiting:
-        run.note("No new relevant jobs found – no batch this run")
+        run.note("No new relevant jobs found - no batch this run")
         return None
     batch = db.create_batch(run.user_id, [j["id"] for j in waiting])
     run.note(f"Batch #{batch['number']} created with {len(waiting)} jobs")
@@ -59,7 +55,7 @@ def process(run: db.PipelineRun, batch: dict, profile: dict, brief: str, setting
     def active():
         return [j for j in jobs if j["status"] in ACTIVE and int(j.get("attempts") or 0) < config.MAX_ATTEMPTS]
 
-    # 2. Salary for every job that hasn't been checked yet
+    # salary
     todo = [j for j in active() if j["salary_text"] == config.NA and not (j.get("meta") or {}).get("salary_checked")]
     if todo:
         db.update_batch(batch["id"], {"stage": "salary"})
@@ -70,10 +66,10 @@ def process(run: db.PipelineRun, batch: dict, profile: dict, brief: str, setting
                 salary.run(run, job)
             except llm.StopUser:
                 raise
-            except Exception as exc:  # a missing salary never blocks the batch
+            except Exception as exc:  # not worth failing the job over
                 log.warning("salary failed for %s: %s", job["job_id"], exc)
 
-    # 3. Score every job, then rank the batch
+    # score, then rank
     todo = [j for j in active() if j["status"] == "new"]
     if todo:
         db.update_batch(batch["id"], {"stage": "scoring"})
@@ -87,8 +83,8 @@ def process(run: db.PipelineRun, batch: dict, profile: dict, brief: str, setting
             except Exception as exc:
                 _failed(run, job, exc)
     if any(j["status"] == "new" for j in active()):
-        run.note(f"{label}: some jobs still need scoring – continuing next run")
-        return  # rank only once the whole batch is scored
+        run.note(f"{label}: some jobs still need scoring - continuing next run")
+        return
 
     ranked = sorted([j for j in jobs if j.get("ats_score") is not None], key=lambda j: -(j["ats_score"] or 0))
     for rank, job in enumerate(ranked, 1):
@@ -96,7 +92,7 @@ def process(run: db.PipelineRun, batch: dict, profile: dict, brief: str, setting
             db.update_job(job["job_id"], {"batch_rank": rank})
             job["batch_rank"] = rank
 
-    # 4. Tailor → Coach → Writer, one job at a time, highest score first
+    # tailor / coach / writer, best first
     db.update_batch(batch["id"], {"stage": "tailoring"})
     queue = sorted([j for j in active() if j["status"] in ("scored", "tailored")], key=lambda j: j.get("batch_rank") or 999)
     per_run = max(1, int(settings.get("max_jobs_per_run") or 3))
@@ -116,7 +112,7 @@ def process(run: db.PipelineRun, batch: dict, profile: dict, brief: str, setting
             job["status"] = "ready"
             run.processed += 1
             run.note(f"{label} #{job['batch_rank']} ready: {job['title']} @ {job['company']} "
-                     f"(ATS {job.get('ats_score')}→{job.get('tailored_ats_score')})")
+                     f"(ATS {job.get('ats_score')} -> {job.get('tailored_ats_score')})")
         except llm.StopUser:
             raise
         except Exception as exc:
@@ -128,4 +124,4 @@ def process(run: db.PipelineRun, batch: dict, profile: dict, brief: str, setting
         db.update_batch(batch["id"], {"status": "done", "stage": "done", "finished_at": db.now_iso()})
         run.note(f"{label} finished")
     else:
-        run.note(f"{label}: {remaining} jobs still to process – continuing next run")
+        run.note(f"{label}: {remaining} jobs still to process - continuing next run")

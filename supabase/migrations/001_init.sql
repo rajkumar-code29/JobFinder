@@ -1,11 +1,8 @@
--- JobFinder schema. Run once in Supabase SQL editor (or `supabase db push`).
--- Single-user app: the Flutter client signs in as you; the pipeline uses the service-role key.
+-- Base schema. The app signs in as a normal user, the pipeline uses the service-role key.
 
 create extension if not exists pgcrypto;
 
--- ---------------------------------------------------------------------------
--- Settings: what to search for and where. One row (id = 1).
--- ---------------------------------------------------------------------------
+-- settings (single row until 002)
 create table if not exists settings (
   id              int primary key default 1 check (id = 1),
   countries       text[]  not null default array['us','gb','in'],       -- ISO-3166 alpha-2, lower case
@@ -22,12 +19,10 @@ create table if not exists settings (
 );
 insert into settings (id) values (1) on conflict do nothing;
 
--- ---------------------------------------------------------------------------
--- Profile: parsed parent resume + cover letter (written by the Profile agent).
--- ---------------------------------------------------------------------------
+-- profile: parsed parent resume + cover letter
 create table if not exists profile (
   id                 int primary key default 1 check (id = 1),
-  resume_filename    text not null default 'NA',   -- e.g. "RajKumarGK_Resume.docx" – tailored copies reuse this name
+  resume_filename    text not null default 'NA',   -- e.g. "RajKumarGK_Resume.docx" - tailored copies reuse this name
   resume_hash        text not null default 'NA',   -- re-parse only when the parent changes
   cover_letter_hash  text not null default 'NA',
   resume_text        text not null default 'NA',
@@ -40,9 +35,7 @@ create table if not exists profile (
 );
 insert into profile (id) values (1) on conflict do nothing;
 
--- ---------------------------------------------------------------------------
--- Jobs: one row per captured posting. Missing values are stored as 'NA'.
--- ---------------------------------------------------------------------------
+-- jobs: one row per posting, 'NA' for anything missing
 create table if not exists jobs (
   id               uuid primary key default gen_random_uuid(),
   job_id           text not null unique,               -- human id, also the storage directory name, e.g. JF-20260927-8K2QX
@@ -57,7 +50,7 @@ create table if not exists jobs (
   url              text not null default 'NA',
   apply_url        text not null default 'NA',
   description      text not null default 'NA',
-  salary_text      text not null default 'NA',          -- human readable, e.g. "USD 120,000 – 150,000 / year"
+  salary_text      text not null default 'NA',          -- human readable, e.g. "USD 120,000 - 150,000 / year"
   salary_min       numeric,
   salary_max       numeric,
   salary_currency  text not null default 'NA',
@@ -84,9 +77,7 @@ create table if not exists jobs (
 create index if not exists jobs_status_idx on jobs(status);
 create index if not exists jobs_created_idx on jobs(created_at desc);
 
--- ---------------------------------------------------------------------------
--- Pipeline runs + per-agent task log (drives the dashboard stats).
--- ---------------------------------------------------------------------------
+-- runs and agent task log (dashboard)
 create table if not exists pipeline_runs (
   id            uuid primary key default gen_random_uuid(),
   trigger       text not null default 'schedule',
@@ -113,7 +104,7 @@ create table if not exists agent_runs (
 create index if not exists agent_runs_started_idx on agent_runs(started_at desc);
 create index if not exists agent_runs_status_idx on agent_runs(status);
 
--- Dashboard stats in one call.
+-- dashboard numbers
 create or replace view dashboard_stats as
 select
   (select coalesce(sum(jobs_scanned),0) from pipeline_runs)                       as total_scanned,
@@ -135,10 +126,7 @@ create trigger jobs_touch before update on jobs for each row execute function to
 drop trigger if exists settings_touch on settings;
 create trigger settings_touch before update on settings for each row execute function touch_updated_at();
 
--- ---------------------------------------------------------------------------
--- Row level security: any signed-in user (just you – disable sign-ups!) can
--- read everything and edit settings / job application status.
--- ---------------------------------------------------------------------------
+-- RLS (replaced by per-user policies in 002)
 alter table settings      enable row level security;
 alter table profile       enable row level security;
 alter table jobs          enable row level security;
@@ -162,15 +150,12 @@ create policy "auth read agent runs" on agent_runs for select to authenticated u
 
 alter view dashboard_stats set (security_invoker = true);
 
--- Realtime for live dashboard
+-- realtime
 do $$ begin
   alter publication supabase_realtime add table agent_runs, pipeline_runs, jobs;
 exception when others then null; end $$;
 
--- ---------------------------------------------------------------------------
--- Storage buckets (private). `parent/` holds your master resume + cover letter,
--- `jobs/<job_id>/` holds everything generated for that job.
--- ---------------------------------------------------------------------------
+-- private buckets: parent/ for the master documents, jobs/ for generated files
 insert into storage.buckets (id, name, public) values ('parent','parent',false) on conflict do nothing;
 insert into storage.buckets (id, name, public) values ('jobs','jobs',false)     on conflict do nothing;
 

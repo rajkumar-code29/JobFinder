@@ -1,9 +1,6 @@
--- JobFinder: per-agent model routing, model scorecard, 👍/👎 feedback and head-to-head comparisons.
--- Run once in the Supabase SQL editor after 005_batches_and_control.sql.
+-- Model routing per agent, scorecard, feedback, comparisons.
 
--- ---------------------------------------------------------------------------
--- More AI providers for API keys (Groq, OpenRouter)
--- ---------------------------------------------------------------------------
+-- groq/openrouter keys
 alter table api_keys drop constraint if exists api_keys_provider_check;
 alter table api_keys add constraint api_keys_provider_check
   check (provider in ('gemini', 'groq', 'openrouter', 'adzuna', 'rapidapi'));
@@ -11,11 +8,7 @@ alter table shared_api_keys drop constraint if exists shared_api_keys_provider_c
 alter table shared_api_keys add constraint shared_api_keys_provider_check
   check (provider in ('gemini', 'groq', 'openrouter', 'adzuna', 'rapidapi'));
 
--- ---------------------------------------------------------------------------
--- Routing: ordered model list per agent, e.g. scout = {groq:openai/gpt-oss-120b, gemini:flash-lite}.
--- "gemini:flash" / "gemini:flash-lite" mean every available model of that family, newest first.
--- Agents without a row use the built-in defaults.
--- ---------------------------------------------------------------------------
+-- routing; no row = defaults from llm.py
 create table if not exists model_routing (
   agent      text primary key check (agent in ('profile', 'scout', 'salary', 'search', 'scorer', 'tailor', 'coach', 'writer')),
   chain      text[] not null check (cardinality(chain) between 1 and 8),
@@ -32,9 +25,7 @@ create policy "admin routing update" on model_routing for update to authenticate
 drop policy if exists "admin routing delete" on model_routing;
 create policy "admin routing delete" on model_routing for delete to authenticated using (public.is_admin());
 
--- ---------------------------------------------------------------------------
--- Scorecard: per day / agent / model counters written by the pipeline.
--- ---------------------------------------------------------------------------
+-- scorecard counters (pipeline writes these)
 create table if not exists model_stats (
   day          date not null,
   agent        text not null,
@@ -53,7 +44,7 @@ drop policy if exists "admin stats read" on model_stats;
 create policy "admin stats read" on model_stats for select to authenticated using (public.is_admin());
 revoke insert, update, delete on model_stats from anon, authenticated;
 
--- 👍/👎 on a job's tailored resume, interview pack or cover letter (any user, for their own jobs).
+-- thumbs up/down from users
 create table if not exists model_feedback (
   user_id    uuid not null default auth.uid() references auth.users(id) on delete cascade,
   job_id     text not null,
@@ -90,9 +81,7 @@ $$;
 revoke all on function public.model_scorecard(int) from public, anon;
 grant execute on function public.model_scorecard(int) to authenticated;
 
--- ---------------------------------------------------------------------------
--- Head-to-head comparisons: the same jobs through 2–4 candidate models for one agent.
--- ---------------------------------------------------------------------------
+-- comparisons
 create table if not exists model_comparisons (
   id           bigserial primary key,
   requested_by uuid not null default auth.uid() references auth.users(id) on delete cascade,
@@ -146,7 +135,7 @@ begin
     raise exception 'Only @rajkumar.codes accounts can run comparisons';
   end if;
   if exists (select 1 from model_comparisons where status in ('queued', 'running') and created_at > now() - interval '30 minutes') then
-    raise exception 'A comparison is already queued or running – wait for it to finish';
+    raise exception 'A comparison is already queued or running';
   end if;
   select decrypted_secret into v_token from vault.decrypted_secrets where name = 'gh_dispatch_token';
   if v_token is null then

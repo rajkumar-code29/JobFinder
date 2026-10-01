@@ -1,15 +1,9 @@
-/// How the agents will read a job-board link. Mirrors agents/jobfinder/sources/boards.py (detect) and
-/// google_search.py (site_target).
+/// How a board link will be read. Keep in sync with detect() in sources/boards.py.
 class BoardKind {
   const BoardKind(this.label, {this.direct = false, this.warning});
 
-  /// e.g. "Workday feed" or "Google search"
   final String label;
-
-  /// true = read straight from the company's public job feed (full descriptions)
-  final bool direct;
-
-  /// shown under the link when results will be limited
+  final bool direct; // public ATS feed
   final String? warning;
 }
 

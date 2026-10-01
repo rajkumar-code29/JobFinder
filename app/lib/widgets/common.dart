@@ -1,7 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:intl/intl.dart';
 
-/// Centers content and caps its width so pages read well on desktop web.
+/// Centered, max-width wrapper for wide screens.
 class PageBody extends StatelessWidget {
   const PageBody({super.key, required this.child, this.maxWidth = 1100});
   final Widget child;
@@ -10,7 +10,7 @@ class PageBody extends StatelessWidget {
   @override
   Widget build(BuildContext context) => Align(
         alignment: Alignment.topCenter,
-        heightFactor: 1, // only as tall as the content – otherwise it fills e.g. a whole bottom bar
+        heightFactor: 1, // don't stretch (it filled the whole screen in the bottom bar)
         child: ConstrainedBox(constraints: BoxConstraints(maxWidth: maxWidth), child: child),
       );
 }
@@ -47,7 +47,7 @@ class ScoreBadge extends StatelessWidget {
         borderRadius: BorderRadius.circular(big ? 12 : 8),
       ),
       child: Column(mainAxisSize: MainAxisSize.min, children: [
-        Text(score == null ? '—' : '$score%',
+        Text(score == null ? '-' : '$score%',
             style: TextStyle(color: c, fontWeight: FontWeight.w700, fontSize: big ? 22 : 13)),
         Text(label, style: TextStyle(color: c, fontSize: big ? 12 : 10)),
       ]),

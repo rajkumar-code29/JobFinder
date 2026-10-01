@@ -1,15 +1,12 @@
 import 'package:flutter/foundation.dart';
 
-/// Invite and password-reset emails land on the web app as
-/// `https://jobs.example.com/#access_token=…&type=invite` (or `type=recovery`),
-/// and expired/used links as `#error=…&error_description=…`.
-/// Supabase turns the tokens into a session; we additionally remember that this person
-/// still has to choose a password, and surface link errors on the login screen.
+/// Invite/reset links arrive with `#access_token=...&type=invite|recovery`, or `#error_description=...`
+/// when the link is dead. Supabase handles the session; we just remember to ask for a password.
 class AuthLinks {
   static final needsPassword = ValueNotifier<bool>(false);
   static String? linkError;
 
-  /// Call before Supabase.initialize(), which consumes the URL fragment.
+  /// Must run before Supabase.initialize() eats the fragment.
   static void captureInitialUrl() {
     if (!kIsWeb) return;
     final params = <String, String>{...Uri.base.queryParameters};

@@ -1,12 +1,8 @@
-"""Hourly pipeline, run for every enabled user in turn:
-Profile → batch workflow (see batch.py): Scout fills Batch #N → Salary (all) → Scorer (all, ranked) →
-Tailor → Coach → Writer one job at a time in rank order. An admin can pause everything (control.py).
+"""Hourly run. Goes through every enabled user with their own keys and call budget, then runs the batch
+flow in batch.py.
 
-Each user gets their own API-key pool (their keys first, then the shared keys if their account allows it)
-and their own Gemini call budget, so one user can't use up another's limits.
-
-Usage:  python -m jobfinder.pipeline [--trigger manual] [--all-sources] [--skip-scout] [--user EMAIL] [--job JF-...]
-Each job resumes from its last completed stage, so a run cut short by a budget or limit loses nothing.
+python -m jobfinder.pipeline [--trigger manual] [--all-sources] [--skip-scout] [--user EMAIL] [--job JF-...]
+                             [--compare ID]
 """
 from __future__ import annotations
 
@@ -41,7 +37,7 @@ def process(run: db.PipelineRun, job: dict, profile: dict, brief: str, settings:
 
     db.update_job(jid, {"status": "ready", "error": None})
     run.processed += 1
-    run.note(f"{jid} ready: {job['title']} @ {job['company']} (ATS {job.get('ats_score')}→{job.get('tailored_ats_score')})")
+    run.note(f"{jid} ready: {job['title']} @ {job['company']} (ATS {job.get('ats_score')} -> {job.get('tailored_ats_score')})")
 
 
 def run_user(account: dict, args, store: KeyStateStore, shared: dict, only_job: dict | None) -> bool:
@@ -54,7 +50,7 @@ def run_user(account: dict, args, store: KeyStateStore, shared: dict, only_job: 
                  on_event=run.note, should_stop=control.paused)
     try:
         if not any(pools[p] for p in AI_PROVIDERS):
-            run.note("No AI provider key available (Gemini, Groq, …): add one in Settings → API keys. Skipping this user.")
+            run.note("No AI provider key available (Gemini, Groq, ...): add one in Settings > API keys. Skipping this user.")
             return True
         settings = db.get_settings(uid)
         try:
@@ -65,11 +61,11 @@ def run_user(account: dict, args, store: KeyStateStore, shared: dict, only_job: 
             log.warning("clean-up failed: %s", exc)
         profile = profile_agent.run(run)
         if profile is None:
-            run.note("No parent resume uploaded yet (Settings → Parent documents). Skipping this user.")
+            run.note("No parent resume uploaded yet (Settings > Parent documents). Skipping this user.")
             return True
         brief = profile_agent.brief(profile)
 
-        if only_job:  # --job: full reprocess of one job, outside the batch flow
+        if only_job:  # --job reprocesses one job from scratch
             try:
                 process(run, {**only_job, "status": "new", "files": {}, "attempts": 0}, profile, brief, settings)
             except llm.StopUser:
@@ -88,7 +84,7 @@ def run_user(account: dict, args, store: KeyStateStore, shared: dict, only_job: 
             if current is not None:
                 batch.process(run, current, profile, brief, settings)
     except llm.Paused:
-        run.note("Agents paused by an admin – stopping")
+        run.note("Agents paused by an admin - stopping")
     except llm.StopUser as exc:
         run.note(f"Stopping: {exc}")
     except Exception as exc:
@@ -112,24 +108,24 @@ def main(argv=None) -> int:
     ap.add_argument("--skip-scout", action="store_true")
     ap.add_argument("--user", help="only run for this user (email)")
     ap.add_argument("--job", help="(re)process a single job id")
-    ap.add_argument("--compare", type=int, help="run a model comparison (admin → Models → Compare)")
+    ap.add_argument("--compare", type=int, help="run a model comparison (admin > Models > Compare)")
     args = ap.parse_args(argv)
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
 
     if control.paused():
-        log.info("Agents are paused by an admin (Home → Resume agents) – nothing to do.")
+        log.info("Agents are paused by an admin (Home > Resume) - nothing to do.")
         return 0
     if args.compare:
         from . import compare
         return compare.run(args.compare)
     db.expire_stale_agent_runs()
     if args.trigger == "schedule" and not (args.job or args.user) and db.scheduled_run_since(minutes=40):
-        # The Cloudflare scheduler and GitHub's backup cron can both fire; one scheduled run per slot is enough.
-        log.info("A scheduled run already happened in the last 40 minutes – skipping.")
+        # the Cloudflare cron and the GitHub backup cron can both fire
+        log.info("A scheduled run already happened in the last 40 minutes - skipping.")
         return 0
     try:
         db.prune_seen()
-    except Exception as exc:  # e.g. migration 003 not applied yet
+    except Exception as exc:
         log.warning("could not prune seen_postings: %s", exc)
     store = KeyStateStore()
     accounts = db.active_accounts()
@@ -154,7 +150,7 @@ def main(argv=None) -> int:
     ok = True
     for account in accounts:
         if control.paused():
-            log.info("Agents paused by an admin – skipping the remaining users.")
+            log.info("Agents paused by an admin - skipping the remaining users.")
             break
         ok = run_user(account, args, store, shared, only_job) and ok
     return 0 if ok else 1

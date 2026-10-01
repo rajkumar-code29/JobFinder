@@ -1,6 +1,5 @@
-"""Job discovery via Gemini + Google Search grounding (no scraping). Used for:
-  * general searches per role/country, and
-  * board URLs we have no API for (LinkedIn, Indeed, Naukri, custom careers pages) via `site:` queries."""
+"""Job search through Gemini with Google Search grounding: per role/country, and `site:` searches for
+boards without an API (LinkedIn, Indeed, ...)."""
 from __future__ import annotations
 
 import hashlib
@@ -50,8 +49,8 @@ def search_roles(roles: list[str], countries: list[str]) -> list[RawJob]:
     return jobs
 
 
-# Where the individual job pages live on big boards, so `site:` hits postings rather than search/list pages.
-# `site:` also matches regional subdomains (in.linkedin.com, uk.indeed.com…) once the "www." is dropped.
+# Job-page paths on the big boards, so site: hits postings rather than search pages.
+# Without www. it also matches regional subdomains like in.linkedin.com.
 BOARD_JOB_PATHS = {
     "linkedin.com": "linkedin.com/jobs/view",
     "glassdoor.com": "glassdoor.com/job-listing",
@@ -73,8 +72,7 @@ BOARD_JOB_PATHS = {
 
 
 def site_target(url: str) -> str:
-    """The `site:` filter for a board URL: known boards map to their job-page path; for anything else the
-    domain (without www.) plus up to two path segments, e.g. careers.acme.com/jobs. Query strings are ignored."""
+    """site: target for a URL: a known job-page path, or host + first two path segments."""
     u = urlparse(url if "://" in url else f"https://{url}")
     host = u.netloc.lower().split(":")[0].removeprefix("www.")
     for domain, target in BOARD_JOB_PATHS.items():

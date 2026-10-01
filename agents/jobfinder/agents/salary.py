@@ -1,4 +1,4 @@
-"""Salary agent: JD → regex → Glassdoor-style estimate via Google Search → 'NA'."""
+"""Salary from the JD, else an estimate from salary sites, else NA."""
 from __future__ import annotations
 
 import re
@@ -53,7 +53,7 @@ def from_description(text: str) -> dict | None:
 
 
 def run(run: db.PipelineRun, job: dict) -> None:
-    """Fill in a missing salary once per job (JD → web estimate → Adzuna estimate → NA)."""
+    """Checked once per job."""
     meta = job.get("meta") or {}
     if job["salary_text"] != NA or meta.get("salary_checked"):
         return
@@ -81,7 +81,7 @@ def run(run: db.PipelineRun, job: dict) -> None:
                      "salary_text": format_salary(est["min"], est["max"], est["currency"], "year") + " (est. Adzuna)",
                      "salary_source": "estimate:adzuna"}
         found = found or {}
-        found["meta"] = {**found.get("meta", meta), "salary_checked": True}  # don't look again next run
+        found["meta"] = {**found.get("meta", meta), "salary_checked": True}
         db.update_job(job["job_id"], found)
         job.update(found)
-        task.message = f"Salary: {found['salary_text']}" if "salary_text" in found else "Salary not available – stored as NA"
+        task.message = f"Salary: {found['salary_text']}" if "salary_text" in found else "Salary not available - stored as NA"

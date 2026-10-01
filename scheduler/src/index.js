@@ -1,5 +1,5 @@
-// Starts the agents workflow via GitHub's workflow_dispatch API.
-// env.GH_DISPATCH_TOKEN: fine-grained GitHub token, this repo only, "Actions: read and write".
+// Cron trigger -> workflow_dispatch on the agents workflow.
+// GH_DISPATCH_TOKEN: fine-grained token, this repo only, Actions read/write.
 export default {
   async scheduled(event, env, ctx) {
     ctx.waitUntil(dispatch(env, event.cron));
@@ -20,12 +20,12 @@ async function dispatch(env, cron) {
       "Content-Type": "application/json",
       "User-Agent": "jobfinder-scheduler",
     },
-    // trigger=schedule keeps the per-source throttles (Remotive every 6h, Google search every 4h…)
+    // "schedule" so the per-source throttles still apply
     body: JSON.stringify({ ref: env.BRANCH, inputs: { trigger: "schedule", all_sources: "false" } }),
   });
   if (res.status !== 204) {
     const detail = (await res.text()).slice(0, 300);
-    // 401 = token expired/revoked, 403/404 = token lacks "Actions: write" on this repo
+    // 401: expired/revoked token, 403/404: missing Actions write
     throw new Error(`GitHub dispatch failed (${res.status}): ${detail}`);
   }
   console.log(`Started ${env.WORKFLOW} on ${env.GITHUB_REPO}@${env.BRANCH} (cron ${cron})`);

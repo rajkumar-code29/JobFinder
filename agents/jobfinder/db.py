@@ -1,4 +1,4 @@
-"""Supabase access + agent activity tracking."""
+"""Supabase helpers and run/agent logging."""
 from __future__ import annotations
 
 import logging
@@ -23,7 +23,7 @@ def now_iso() -> str:
     return datetime.now(timezone.utc).isoformat()
 
 
-# ---------------------------------------------------------------- users
+# users
 def active_accounts() -> list[dict]:
     return sb.table("accounts").select("*").eq("enabled", True).order("created_at").execute().data
 
@@ -33,7 +33,7 @@ def user_api_keys(user_id: str) -> list[dict]:
 
 
 def sync_shared_keys(github_keys: list[dict]) -> list[dict]:
-    """Register GitHub-secret keys (by fingerprint, never the value) and return the enabled shared keys in order."""
+    """Register env keys by fingerprint (not value) and return enabled shared keys in order."""
     if github_keys:
         sb.table("shared_api_keys").upsert(github_keys, on_conflict="fingerprint", ignore_duplicates=True).execute()
     return (sb.table("shared_api_keys").select("*").eq("enabled", True)
@@ -48,7 +48,7 @@ def user_label(user_id: str) -> str:
         return user_id[:8]
 
 
-# ---------------------------------------------------------------- settings/profile
+# settings/profile
 def get_settings(user_id: str) -> dict:
     return sb.table("settings").select("*").eq("user_id", user_id).single().execute().data
 
@@ -61,7 +61,7 @@ def update_profile(user_id: str, values: dict) -> None:
     sb.table("profile").update({**values, "updated_at": now_iso()}).eq("user_id", user_id).execute()
 
 
-# ---------------------------------------------------------------- jobs
+# jobs
 def existing_keys(user_id: str, source: str, external_ids: list[str]) -> set[str]:
     found: set[str] = set()
     for i in range(0, len(external_ids), 100):
@@ -72,8 +72,7 @@ def existing_keys(user_id: str, source: str, external_ids: list[str]) -> set[str
 
 
 def all_rows(build, page: int = 1000) -> list[dict]:
-    """Supabase returns at most 1000 rows per request; page through everything.
-    `build` returns a fresh query builder each call."""
+    """Page past PostgREST's 1000-row cap. build() must return a new query each time."""
     out, start = [], 0
     while True:
         rows = build().range(start, start + page - 1).execute().data
@@ -84,21 +83,21 @@ def all_rows(build, page: int = 1000) -> list[dict]:
 
 
 def recent_fingerprints(user_id: str, days: int = 45) -> set[str]:
-    """company|title fingerprints of recent jobs, for cross-source de-duplication."""
+    """company|title of recent jobs, for cross-source dedupe."""
     since = (datetime.now(timezone.utc) - timedelta(days=days)).isoformat()
     rows = all_rows(lambda: sb.table("jobs").select("company,title").eq("user_id", user_id)
                     .gte("created_at", since).order("created_at"))
     return {fingerprint(r["company"], r["title"]) for r in rows}
 
 
-# ---------------------------------------------------------------- postings the AI already rated
+# seen postings
 SEEN_DAYS = 45
 
 
 def seen_lookup(user_id: str, context: str, keys: list[tuple[str, str, str]]) -> tuple[dict, dict]:
-    """keys = [(source, external_id, fingerprint)]. Returns ({(source, external_id): row}, {fingerprint: row})
-    for postings already rated under the same resume/roles/locations context."""
-    by_key, by_fp = {}, {}  # rows older than SEEN_DAYS are pruned at the start of each run (except "deleted" markers)
+    """Earlier ratings for these (source, external_id, fingerprint) keys under the same context,
+    plus anything the user deleted."""
+    by_key, by_fp = {}, {}  # old rows are pruned at the start of each run
     cols = "source,external_id,fingerprint,relevance,reason,context"
     by_source: dict[str, list[str]] = {}
     for source, ext, _ in keys:
@@ -112,14 +111,14 @@ def seen_lookup(user_id: str, context: str, keys: list[tuple[str, str, str]]) ->
     for i in range(0, len(fps), 100):
         rows = (sb.table("seen_postings").select(cols).eq("user_id", user_id).in_("context", [context, "*"])
                 .in_("fingerprint", fps[i:i + 100]).execute().data)
-        for r in rows:  # a "deleted" marker beats any rating of the same job on another site
+        for r in rows:  # deleted marker wins over a rating from another site
             if r["context"] == "*" or r["fingerprint"] not in by_fp:
                 by_fp[r["fingerprint"]] = r
     return by_key, by_fp
 
 
 def record_seen(user_id: str, context: str, rows: list[dict]) -> None:
-    """rows = [{source, external_id, fingerprint, relevance, reason}]"""
+    """Upsert ratings (source, external_id, fingerprint, relevance, reason)."""
     stamp = now_iso()
     payload = [{**r, "user_id": user_id, "context": context, "seen_at": stamp} for r in rows]
     for i in range(0, len(payload), 500):
@@ -127,8 +126,8 @@ def record_seen(user_id: str, context: str, rows: list[dict]) -> None:
 
 
 def cleanup_old_jobs(user_id: str, days: int) -> int:
-    """Delete jobs never marked Applied that are older than `days` (files, then row), leaving a "deleted"
-    marker so the Scout won't bring them back. Jobs in a batch that's still being processed are kept."""
+    """Remove unapplied jobs older than `days` (files first) and mark them as deleted.
+    Skips jobs in a batch that's still open."""
     cutoff = (datetime.now(timezone.utc) - timedelta(days=days)).isoformat()
     rows = (sb.table("jobs").select("id,job_id,source,external_id,company,title,batch_id")
             .eq("user_id", user_id).neq("status", "applied").lt("created_at", cutoff).limit(200).execute().data)
@@ -156,7 +155,7 @@ def cleanup_old_jobs(user_id: str, days: int) -> int:
 
 def prune_seen() -> None:
     cutoff = (datetime.now(timezone.utc) - timedelta(days=SEEN_DAYS)).isoformat()
-    sb.table("seen_postings").delete().lt("seen_at", cutoff).neq("context", "*").execute()  # keep "deleted" markers
+    sb.table("seen_postings").delete().lt("seen_at", cutoff).neq("context", "*").execute()
 
 
 def fingerprint(company: str, title: str) -> str:
@@ -184,9 +183,9 @@ def queued_jobs(user_id: str, limit: int) -> list[dict]:
     )
 
 
-# ---------------------------------------------------------------- storage
+# storage
 def model_routing() -> dict[str, list[str]]:
-    """Admin-configured model order per agent (migration 006); empty → built-in defaults."""
+    """Per-agent model order from the DB (empty means use the defaults)."""
     try:
         rows = sb.table("model_routing").select("agent,chain").execute().data
     except Exception as exc:
@@ -196,7 +195,7 @@ def model_routing() -> dict[str, list[str]]:
 
 
 def record_model_stats(rows: list[dict]) -> None:
-    """Add this run's per agent/model counters to today's scorecard row."""
+    """Add this run's counters to today's model_stats rows."""
     if not rows:
         return
     day = datetime.now(timezone.utc).date().isoformat()
@@ -213,7 +212,7 @@ def record_model_stats(rows: list[dict]) -> None:
 
 
 def model_meta(job: dict, agent: str, model: str | None) -> dict:
-    """job.meta with the model that produced `agent`'s output recorded (for 👍/👎 feedback and the scorecard)."""
+    """Copy of job.meta with meta.models[agent] set."""
     meta = dict(job.get("meta") or {})
     if model:
         meta["models"] = {**(meta.get("models") or {}), agent: model}
@@ -221,7 +220,7 @@ def model_meta(job: dict, agent: str, model: str | None) -> dict:
 
 
 def job_dir(job: dict) -> str:
-    """Storage folder for a job: jobs/<user_id>/<job_id>/"""
+    """jobs/<user_id>/<job_id>"""
     return f"{job['user_id']}/{job['job_id']}"
 
 
@@ -236,10 +235,10 @@ def download(path: str, bucket: str = JOBS_BUCKET) -> bytes:
 
 def list_files(prefix: str, bucket: str) -> list[dict]:
     items = sb.storage.from_(bucket).list(prefix) or []
-    return [i for i in items if i.get("id")]  # folders have no id
+    return [i for i in items if i.get("id")]  # skip folders
 
 
-# ---------------------------------------------------------------- runs
+# runs
 class PipelineRun:
     def __init__(self, trigger: str, user_id: str):
         self.user_id = user_id
@@ -251,7 +250,7 @@ class PipelineRun:
     def note(self, msg: str) -> None:
         log.info(msg)
         self.lines.append(f"{datetime.now(timezone.utc):%H:%M:%S} {msg}")
-        if time.monotonic() - self._saved_at > 15:  # keep the app's run log live, even if the run is cancelled
+        if time.monotonic() - self._saved_at > 15:  # so the app sees the log while it runs
             try:
                 self.save()
             except Exception:
@@ -269,15 +268,15 @@ class PipelineRun:
         self._saved_at = time.monotonic()
 
     @contextmanager
-    def agent(self, name: str, job_id: str | None = None, message: str | None = None):  # noqa: C901
-        """Record an agent task in agent_runs so the dashboard can show live activity and errors."""
+    def agent(self, name: str, job_id: str | None = None, message: str | None = None):
+        """Log an agent task to agent_runs."""
         row = sb.table("agent_runs").insert(
             {"pipeline_run": self.id, "user_id": self.user_id, "agent": name, "job_id": job_id, "message": message}
         ).execute().data[0]
         task = AgentTask(row["id"], message)
         try:
             yield task
-        except BaseException as exc:  # includes cancellation (KeyboardInterrupt), so no task stays "running"
+        except BaseException as exc:  # incl. KeyboardInterrupt when the workflow is cancelled
             if not isinstance(exc, Exception):
                 sb.table("agent_runs").update(
                     {"status": "error", "message": "stopped (run cancelled)", "finished_at": now_iso()}
@@ -309,8 +308,7 @@ def scheduled_run_since(minutes: int) -> bool:
 
 
 def expire_stale_agent_runs() -> None:
-    """Only one pipeline runs at a time (GitHub concurrency group), so anything still 'running' when a new run
-    starts belongs to a run that was cancelled or crashed: close it so the dashboard stays honest."""
+    """Only one run at a time (workflow concurrency group), so anything still 'running' is left over."""
     sb.table("agent_runs").update(
         {"status": "error", "message": "stopped (the run ended unexpectedly)", "finished_at": now_iso()}
     ).eq("status", "running").execute()
@@ -319,7 +317,7 @@ def expire_stale_agent_runs() -> None:
     ).eq("status", "running").execute()
 
 
-# ---------------------------------------------------------------- batches
+# batches
 def open_batch(user_id: str) -> dict | None:
     rows = (sb.table("batches").select("*").eq("user_id", user_id).eq("status", "processing")
             .order("number", desc=True).limit(1).execute().data)
@@ -327,7 +325,7 @@ def open_batch(user_id: str) -> dict | None:
 
 
 def unbatched_jobs(user_id: str, limit: int) -> list[dict]:
-    """Relevant jobs waiting for a batch (best match first)."""
+    """Jobs not in a batch yet, best match first."""
     return (sb.table("jobs").select("id,job_id,relevance").eq("user_id", user_id).eq("status", "new")
             .is_("batch_id", "null").lt("attempts", config.MAX_ATTEMPTS)
             .order("relevance", desc=True).order("created_at").limit(limit).execute().data)

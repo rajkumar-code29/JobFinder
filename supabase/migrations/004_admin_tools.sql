@@ -1,17 +1,12 @@
--- JobFinder: admin tools for @rajkumar.codes accounts.
---   * shared_api_keys – the shared (owner) key pool, managed in the app: see which key is in use, switch order,
---     disable keys. Keys stored in GitHub secrets appear here too (value stays in GitHub, only the last 4 chars).
---   * request_agents_run() – "Run now" button: starts the agents GitHub workflow via pg_net.
--- Run once in the Supabase SQL editor after 003_seen_postings.sql, then store the GitHub token (see bottom).
+-- Admin tools (@rajkumar.codes): shared key pool and the Run now button.
+-- Needs the GitHub token in Vault afterwards, see the bottom of the file.
 
 create or replace function public.is_admin() returns boolean
 language sql stable as $$
   select coalesce(auth.jwt() ->> 'email', '') ilike '%@rajkumar.codes'
 $$;
 
--- ---------------------------------------------------------------------------
--- Shared key pool
--- ---------------------------------------------------------------------------
+-- shared keys (GitHub secret keys show up here by fingerprint, without the value)
 create table if not exists shared_api_keys (
   id              uuid primary key default gen_random_uuid(),
   provider        text not null check (provider in ('gemini', 'adzuna', 'rapidapi')),
@@ -50,7 +45,7 @@ create policy "admin change shared keys" on shared_api_keys for update to authen
 drop policy if exists "admin remove shared keys" on shared_api_keys;
 create policy "admin remove shared keys" on shared_api_keys for delete to authenticated using (public.is_admin() and source = 'app');
 
--- key values are write-only for admins too
+-- write-only for admins as well
 revoke all on shared_api_keys from anon, authenticated;
 grant select (id, provider, label, source, app_id, hint, priority, enabled, in_use, exhausted_until, last_error,
               last_used_at, created_at) on shared_api_keys to authenticated;
@@ -58,9 +53,7 @@ grant insert (provider, label, app_id, key_value, priority) on shared_api_keys t
 grant update (label, priority, enabled) on shared_api_keys to authenticated;
 grant delete on shared_api_keys to authenticated;
 
--- ---------------------------------------------------------------------------
--- "Run now": start the agents workflow through GitHub's API (pg_net), token kept in Supabase Vault
--- ---------------------------------------------------------------------------
+-- Run now: workflow_dispatch through pg_net, token from Vault
 create extension if not exists pg_net;
 
 create table if not exists agent_run_requests (
@@ -88,7 +81,7 @@ begin
   end if;
   select max(requested_at) into v_last from agent_run_requests;
   if v_last > now() - interval '5 minutes' then
-    raise exception 'A run was started less than 5 minutes ago – check Agents → Runs';
+    raise exception 'A run was started less than 5 minutes ago, check Agents > Runs';
   end if;
   select decrypted_secret into v_token from vault.decrypted_secrets where name = 'gh_dispatch_token';
   if v_token is null then
@@ -105,7 +98,7 @@ begin
   return v_id;
 end $$;
 
--- GitHub's answer for a request: 204 = run started.
+-- 204 = started
 create or replace function public.agents_run_request_status(p_id bigint)
 returns table (status_code int, message text)
 language sql stable security definer set search_path = public as $$
@@ -120,9 +113,7 @@ grant execute on function public.request_agents_run(boolean) to authenticated;
 revoke all on function public.agents_run_request_status(bigint) from public, anon;
 grant execute on function public.agents_run_request_status(bigint) to authenticated;
 
--- ---------------------------------------------------------------------------
--- After running this file, store the GitHub token (the same fine-grained token as the GH_DISPATCH_TOKEN
--- secret: this repo only, Actions: read and write) in Vault – run this line on its own with your token:
+-- Then store the token (fine-grained, this repo only, Actions read/write) on its own:
 --
 --   select vault.create_secret('github_pat_…', 'gh_dispatch_token', 'Starts the JobFinder agents workflow');
 --

@@ -21,14 +21,12 @@ CURRENCY = {"us": "USD", "gb": "GBP", "in": "INR", "ca": "CAD", "au": "AUD", "de
             "pl": "PLN", "br": "BRL", "mx": "MXN", "za": "ZAR"}
 
 
-# Place names that are also parts of other places ("New Jersey", "Georgia, US") – never treat these
-# as proof that a job is in a different country.
+# Names that show up inside other place names ("New Jersey", "Georgia, US").
 _AMBIGUOUS = {"jersey", "georgia", "guernsey", "jordan", "chad", "niger", "turkey", "victoria", "washington"}
 
 
 def normalize_location(value: str) -> str:
-    """ISO codes, country names and known aliases become a lower-case ISO code (e.g. "UK" -> "gb").
-    Anything else is a custom location (a city, region…) and is kept as typed."""
+    """Country names/aliases -> ISO code ("UK" -> "gb"). Anything else is a custom location, kept as is."""
     v = (value or "").strip()
     low = v.lower()
     if low in COUNTRIES:
@@ -47,7 +45,7 @@ def is_country(value: str) -> bool:
 
 
 def country_name(value: str) -> str:
-    """Country name for an ISO code; custom locations are returned as typed."""
+    """Name for an ISO code, or the custom location unchanged."""
     return COUNTRIES.get(value, value)
 
 
@@ -56,8 +54,7 @@ def _mentions(text: str, word: str) -> bool:
 
 
 def location_matches(location: str, wanted: list[str], remote_ok: bool) -> bool | None:
-    """True: in a wanted place (or acceptable remote). False: clearly in some other country.
-    None: can't tell (e.g. only a city we don't know) – the Scout's AI rating decides."""
+    """True = wanted place (or ok remote), False = clearly another country, None = can't tell."""
     raw = location or ""
     loc = raw.lower()
     if not loc or loc == "na":
@@ -99,7 +96,7 @@ class RawJob:
     extra: dict = field(default_factory=dict)
 
     def clone(self) -> "RawJob":
-        """Independent copy (own `extra` dict) – cached feeds hand one to each user."""
+        """Copy with its own `extra` dict (cached feeds are shared between users)."""
         c = copy.copy(self)
         c.extra = dict(self.extra)
         return c
@@ -131,7 +128,7 @@ def get_json(url: str, **kwargs):
 
 
 def fetch_page_details(url: str) -> dict:
-    """Best-effort full JD from a posting page: JSON-LD JobPosting first, then visible text."""
+    """Full JD from the posting page: JSON-LD JobPosting if present, otherwise page text."""
     if not url or url == NA:
         return {}
     try:
@@ -177,7 +174,7 @@ def format_salary(lo, hi, currency: str, period: str = NA) -> str:
     if lo is None and hi is None:
         return NA
     fmt = lambda v: f"{float(v):,.0f}"
-    rng = fmt(lo) if hi is None or lo == hi else (fmt(hi) if lo is None else f"{fmt(lo)} – {fmt(hi)}")
+    rng = fmt(lo) if hi is None or lo == hi else (fmt(hi) if lo is None else f"{fmt(lo)} - {fmt(hi)}")
     per = f" / {period.lower()}" if period and period != NA else ""
     cur = f"{currency} " if currency and currency != NA else ""
     return f"{cur}{rng}{per}"

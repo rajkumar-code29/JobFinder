@@ -2,7 +2,7 @@
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
 <dict>
-  <!-- App Store Connect / TestFlight build. "upload": sends the build straight to App Store Connect -->
+  <!-- uploads to App Store Connect -->
   <key>method</key>
   <string>app-store-connect</string>
   <key>destination</key>

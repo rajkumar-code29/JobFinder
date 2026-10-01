@@ -1,11 +1,6 @@
--- JobFinder: multi-user + per-user API keys with fallback.
--- Run once in the Supabase SQL editor AFTER 001_init.sql.
--- The earliest-created auth user becomes the owner: existing data is assigned to them and they may use the
--- shared keys from GitHub secrets. Everyone else only uses the keys they add in Settings.
+-- Multi-user. Existing data goes to the oldest auth user (the owner), who also gets the shared keys.
 
--- ---------------------------------------------------------------------------
--- Accounts: per-user limits, controlled by you (users can read but not change their own row).
--- ---------------------------------------------------------------------------
+-- accounts: per-user limits, read-only for the user
 create table if not exists accounts (
   user_id           uuid primary key references auth.users(id) on delete cascade,
   enabled           boolean not null default true,
@@ -19,7 +14,7 @@ declare owner uuid;
 begin
   select id into owner from auth.users order by created_at limit 1;
   if owner is null then
-    raise exception 'Create your own user first (Authentication → Users → Add user), then run this migration.';
+    raise exception 'Create your own user first (Authentication > Users > Add user), then run this migration.';
   end if;
   raise notice 'Owner user id: %', owner;
 
@@ -39,7 +34,7 @@ begin
   on conflict (user_id) do update set use_shared_keys = true;
 end $$;
 
--- settings / profile: one row per user instead of the single id = 1 row
+-- settings/profile: one row per user
 alter table settings drop column if exists id;
 alter table profile  drop column if exists id;
 do $$ begin
@@ -57,19 +52,19 @@ alter table jobs          alter column user_id set not null, alter column user_i
 alter table pipeline_runs alter column user_id set not null;
 alter table agent_runs    alter column user_id set not null;
 
--- the same posting can be captured separately for different users
+-- same posting can exist once per user
 alter table jobs drop constraint if exists jobs_source_external_id_key;
 create unique index if not exists jobs_user_source_external_idx on jobs(user_id, source, external_id);
 create index if not exists jobs_user_status_idx   on jobs(user_id, status);
 create index if not exists agent_runs_user_idx    on agent_runs(user_id, started_at desc);
 create index if not exists pipeline_runs_user_idx on pipeline_runs(user_id, started_at desc);
 
--- rows for any other users that already exist
+-- existing users
 insert into accounts (user_id) select id from auth.users on conflict do nothing;
 insert into settings (user_id) select id from auth.users on conflict do nothing;
 insert into profile  (user_id) select id from auth.users on conflict do nothing;
 
--- new users get empty settings/profile automatically
+-- rows for new users
 create or replace function public.handle_new_user() returns trigger
 language plpgsql security definer set search_path = public as $$
 begin
@@ -82,10 +77,7 @@ drop trigger if exists on_auth_user_created on auth.users;
 create trigger on_auth_user_created after insert on auth.users
   for each row execute function public.handle_new_user();
 
--- ---------------------------------------------------------------------------
--- API keys added by users in the app. Write-only from the app: users can list their keys
--- (label + last 4 chars + status) but can never read a key value back.
--- ---------------------------------------------------------------------------
+-- user API keys; the app can list them (hint + status) but never read the value
 create table if not exists api_keys (
   id              uuid primary key default gen_random_uuid(),
   user_id         uuid not null default auth.uid() references auth.users(id) on delete cascade,
@@ -102,8 +94,7 @@ create table if not exists api_keys (
 );
 create index if not exists api_keys_user_idx on api_keys(user_id, provider, priority);
 
--- Fallback bookkeeping for every key (including the shared GitHub-secret keys), by fingerprint.
--- No policies: only the pipeline (service role) can touch it.
+-- parked keys by fingerprint, pipeline only
 create table if not exists key_state (
   id              text primary key,             -- <sha256 fingerprint>:<scope, e.g. model name>
   provider        text not null,
@@ -112,9 +103,7 @@ create table if not exists key_state (
   updated_at      timestamptz not null default now()
 );
 
--- ---------------------------------------------------------------------------
--- Row level security: every user sees only their own rows.
--- ---------------------------------------------------------------------------
+-- RLS: own rows only
 alter table accounts  enable row level security;
 alter table api_keys  enable row level security;
 alter table key_state enable row level security;
@@ -151,7 +140,7 @@ create policy "own keys insert" on api_keys for insert to authenticated with che
 drop policy if exists "own keys delete" on api_keys;
 create policy "own keys delete" on api_keys for delete to authenticated using (user_id = auth.uid());
 
--- column-level privileges: the key value is insert-only for app users
+-- key_value is insert-only
 revoke all on api_keys from anon, authenticated;
 grant select (id, user_id, provider, label, app_id, hint, priority, exhausted_until, last_error, last_used_at, created_at)
   on api_keys to authenticated;
@@ -160,9 +149,7 @@ grant delete on api_keys to authenticated;
 revoke all on key_state from anon, authenticated;
 revoke insert, update, delete on accounts from anon, authenticated;
 
--- ---------------------------------------------------------------------------
--- Storage: files live under <user_id>/…  (parent/<uid>/resume/…, jobs/<uid>/<job_id>/…)
--- ---------------------------------------------------------------------------
+-- storage paths start with the user id
 drop policy if exists "auth read parent"    on storage.objects;
 drop policy if exists "auth upload parent"  on storage.objects;
 drop policy if exists "auth replace parent" on storage.objects;

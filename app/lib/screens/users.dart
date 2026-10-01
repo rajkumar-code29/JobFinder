@@ -4,7 +4,7 @@ import 'package:go_router/go_router.dart';
 import '../api.dart';
 import '../widgets/common.dart';
 
-/// Admin only: everyone's setup, activity and storage, plus per-user switches (no SQL needed).
+/// Admin view of all users.
 class UsersScreen extends StatefulWidget {
   const UsersScreen({super.key});
 
@@ -51,7 +51,7 @@ class _UsersScreenState extends State<UsersScreen> {
                     maxWidth: 900,
                     child: ListView(padding: const EdgeInsets.all(16), children: [
                       Text('${users.length} users · ${storage.toStringAsFixed(0)} MB of files in total (Supabase free tier: 1 GB). '
-                          'Add people in Supabase → Authentication → Users.', style: Theme.of(context).textTheme.bodySmall),
+                          'Add people in Supabase > Authentication > Users.', style: Theme.of(context).textTheme.bodySmall),
                       const SizedBox(height: 12),
                       for (final u in users) _UserCard(user: u, onUpdate: _update),
                     ]),

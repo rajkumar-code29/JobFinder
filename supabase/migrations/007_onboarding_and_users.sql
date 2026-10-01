@@ -1,9 +1,8 @@
--- JobFinder: onboarding (privacy notice), admin Users panel. Run once after 006_models.sql.
--- (Unapplied jobs older than 30 days are cleaned up by the pipeline, which can also delete their files.)
+-- Privacy notice and the admin Users panel. (Old unapplied jobs are cleaned up by the pipeline.)
 
 alter table accounts add column if not exists privacy_accepted_at timestamptz;
 
--- The signed-in user acknowledges the privacy notice (accounts is otherwise read-only for users).
+-- accounts is read-only for users, so this goes through a function
 create or replace function public.accept_privacy() returns void
 language sql security definer set search_path = public as $$
   update accounts set privacy_accepted_at = now() where user_id = auth.uid();
@@ -11,9 +10,7 @@ $$;
 revoke all on function public.accept_privacy() from public, anon;
 grant execute on function public.accept_privacy() to authenticated;
 
--- ---------------------------------------------------------------------------
--- Admin Users panel: setup status, activity and storage per user.
--- ---------------------------------------------------------------------------
+-- users panel
 create or replace function public.admin_users()
 returns table (
   user_id uuid, email text, created_at timestamptz, last_sign_in_at timestamptz,

@@ -1,6 +1,4 @@
--- JobFinder: remember every posting the Scout's AI has already rated (kept or rejected), per user,
--- so later runs skip it instead of downloading details and asking Gemini again.
--- Run once in the Supabase SQL editor after 002_multi_user.sql.
+-- Postings that were already rated, so they aren't rated again.
 
 create table if not exists seen_postings (
   user_id      uuid not null references auth.users(id) on delete cascade,
@@ -16,6 +14,6 @@ create table if not exists seen_postings (
 create index if not exists seen_postings_fp_idx   on seen_postings(user_id, fingerprint);
 create index if not exists seen_postings_seen_idx on seen_postings(seen_at);
 
--- Pipeline only (service role): no policies, no client access.
+-- pipeline only
 alter table seen_postings enable row level security;
 revoke all on seen_postings from anon, authenticated;

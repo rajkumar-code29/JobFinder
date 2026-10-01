@@ -1,4 +1,4 @@
-"""Writer agent: tailored cover letter. The parent cover letter is background only – never copied."""
+"""Cover letter. The parent letter is only used for background."""
 from __future__ import annotations
 
 from datetime import date
@@ -15,7 +15,7 @@ JOB: {title} @ {company} ({location})
 
 CANDIDATE PROFILE: {profile}
 
-CANDIDATE'S MASTER COVER LETTER — background about the person ONLY. Do NOT reuse its sentences or structure;
+CANDIDATE'S MASTER COVER LETTER - background about the person ONLY. Do NOT reuse its sentences or structure;
 write a new letter specific to this job:
 {parent}
 

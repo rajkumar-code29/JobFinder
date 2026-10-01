@@ -4,7 +4,7 @@ import 'package:go_router/go_router.dart';
 import '../api.dart';
 import '../models.dart';
 
-/// Home card for new users: the setup steps the agents need, until they're done.
+/// Setup checklist on Home.
 class GettingStartedCard extends StatefulWidget {
   const GettingStartedCard({super.key});
 
@@ -45,14 +45,14 @@ class _GettingStartedCardState extends State<GettingStartedCard> {
           final theme = Theme.of(context);
           if (s.ready && s.hasRun && s.waitingOn == null) return const SizedBox.shrink();
           final steps = [
-            (s.resumeDocx, 'Upload your resume as a Word file (.docx)', 'Settings → Parent documents. Add the PDF and your master cover letter too.', '/settings'),
-            (s.aiKey, 'Add your free Gemini API key', 'Settings → API keys → Add API key. The dialog shows how to get one and can test it.', '/settings'),
-            (s.locations, 'Choose where to look', 'Settings → Locations: countries, or any city/region.', '/settings'),
-            (s.roles, 'Say what roles you want', 'Settings → Target roles – or leave empty and the agents use the titles from your resume.', '/settings'),
+            (s.resumeDocx, 'Upload your resume as a Word file (.docx)', 'Settings > Parent documents. Add the PDF and your master cover letter too.', '/settings'),
+            (s.aiKey, 'Add your free Gemini API key', 'Settings > API keys > Add API key. The dialog shows how to get one and can test it.', '/settings'),
+            (s.locations, 'Choose where to look', 'Settings > Locations: countries, or any city/region.', '/settings'),
+            (s.roles, 'Say what roles you want', 'Settings > Target roles - or leave empty and the agents use the titles from your resume.', '/settings'),
           ];
           final optional = [
             (s.extraKeys, 'Optional: Adzuna / JSearch / Groq keys', 'More job sources and faster rating.', '/settings'),
-            (s.jobBoards, 'Optional: companies you like', 'Settings → Job boards: paste their careers-page link.', '/settings'),
+            (s.jobBoards, 'Optional: companies you like', 'Settings > Job boards: paste their careers-page link.', '/settings'),
           ];
           final done = steps.where((x) => x.$1).length;
           return Padding(
@@ -82,7 +82,7 @@ class _GettingStartedCardState extends State<GettingStartedCard> {
                     Padding(
                       padding: const EdgeInsets.only(top: 6),
                       child: Text('Everything the agents need is in place. They start on the next hourly run and build '
-                          'your first batch of up to 20 jobs – tailored resumes appear over the following hours.',
+                          'your first batch of up to 20 jobs - tailored resumes appear over the following hours.',
                           style: theme.textTheme.bodySmall),
                     ),
                   const SizedBox(height: 6),
@@ -121,7 +121,7 @@ class PrivacyNoticeDialog extends StatelessWidget {
             'and can technically access everything stored in it. API keys can\'t be read back in the app.\n\n'
             'AI providers: to tailor your resume and prepare you, your resume and the job descriptions are sent to '
             'the AI provider of your key (e.g. Google Gemini, Groq). Free tiers may use this data to improve their '
-            'models – see each provider\'s terms.\n\n'
+            'models - see each provider\'s terms.\n\n'
             'Your control: delete any job at any time (its files go too). Jobs you never mark as Applied are '
             'deleted automatically after 30 days. Ask the admin to delete your account and everything in it.',
           ),

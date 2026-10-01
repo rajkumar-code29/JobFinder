@@ -1,4 +1,4 @@
-"""Profile agent: knows the parent resume + parent cover letter. Re-parses only when a file changes."""
+"""Parses the parent resume and cover letter. Only re-runs when a file changes."""
 from __future__ import annotations
 
 import hashlib
@@ -34,7 +34,7 @@ def _pick(files: list[dict], prefer: tuple[str, ...]) -> list[dict]:
 
 
 def load_parent_files(user_id: str) -> dict | None:
-    """Parent documents live in parent/<user_id>/resume/ and parent/<user_id>/cover_letter/."""
+    """Files under parent/<uid>/resume and parent/<uid>/cover_letter."""
     resume_files = _pick(db.list_files(f"{user_id}/resume", db.PARENT_BUCKET), (".docx", ".pdf"))
     cover_files = _pick(db.list_files(f"{user_id}/cover_letter", db.PARENT_BUCKET), (".docx", ".pdf", ".txt"))
     if not resume_files:
@@ -47,7 +47,7 @@ def load_parent_files(user_id: str) -> dict | None:
 
 
 def run(run: db.PipelineRun) -> dict | None:
-    """Returns the profile, or None when the user hasn't uploaded a resume yet."""
+    """Profile dict, or None if there's no resume yet."""
     files = load_parent_files(run.user_id)
     if files is None:
         return None
@@ -60,7 +60,7 @@ def run(run: db.PipelineRun) -> dict | None:
 
         profile = db.get_profile(run.user_id)
         if profile["resume_hash"] == r_hash and profile["cover_letter_hash"] == c_hash and profile["structured"]:
-            task.message = "Parent documents unchanged – using cached profile"
+            task.message = "Parent documents unchanged - using cached profile"
             return {**profile, **files}
 
         resume_text = docs.any_text(primary, resume_bytes)
@@ -80,7 +80,7 @@ def run(run: db.PipelineRun) -> dict | None:
 
 
 def brief(profile: dict) -> str:
-    """Compact profile for prompts."""
+    """Short profile JSON for prompts."""
     s = profile.get("structured") or {}
     keep = {k: s.get(k) for k in ("name", "headline", "summary", "years_experience", "seniority", "titles",
                                   "skills_by_category", "experience", "education", "certifications", "projects", "domains")}

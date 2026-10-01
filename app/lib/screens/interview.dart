@@ -12,7 +12,7 @@ List<String> _strs(Object? v) =>
 List<Map<String, dynamic>> _items(Object? v) =>
     v is List ? [for (final x in v) if (x is Map) Map<String, dynamic>.from(x)] : [];
 
-/// Same clean-up as clean_pack() in agents/jobfinder/agents/coach.py, for packs saved before it existed.
+/// Same as clean_pack() in coach.py, for older packs.
 Map<String, dynamic> normalizePack(Map<String, dynamic> pack) {
   final ov = pack['overview'] is Map ? Map<String, dynamic>.from(pack['overview'] as Map) : <String, dynamic>{};
   final mcq = <Map<String, dynamic>>[];
@@ -109,7 +109,7 @@ class _InterviewScreenState extends State<InterviewScreen> {
   }
 }
 
-// ------------------------------------------------------------------ overview
+// overview
 class _Overview extends StatelessWidget {
   const _Overview({required this.job, required this.pack});
   final Job job;
@@ -143,7 +143,7 @@ class _Overview extends StatelessWidget {
   }
 }
 
-// ------------------------------------------------------------------ MCQ quiz
+// MCQ quiz
 class _McqQuiz extends StatefulWidget {
   const _McqQuiz({required this.questions});
   final List<Map<String, dynamic>> questions;
@@ -154,7 +154,7 @@ class _McqQuiz extends StatefulWidget {
 
 class _McqQuizState extends State<_McqQuiz> with AutomaticKeepAliveClientMixin {
   int _index = 0;
-  final Map<int, int> _answers = {}; // question index -> chosen option
+  final Map<int, int> _answers = {};
 
   @override
   bool get wantKeepAlive => true;
@@ -238,7 +238,7 @@ class _McqQuizState extends State<_McqQuiz> with AutomaticKeepAliveClientMixin {
                 Icon(chosen == correct ? Icons.check_circle : Icons.cancel,
                     color: chosen == correct ? Colors.green : Colors.red),
                 const SizedBox(width: 8),
-                Text(chosen == correct ? 'Correct!' : 'Not quite — the answer is ${String.fromCharCode(65 + correct)}',
+                Text(chosen == correct ? 'Correct!' : 'Not quite - the answer is ${String.fromCharCode(65 + correct)}',
                     style: const TextStyle(fontWeight: FontWeight.w600)),
               ]),
               const SizedBox(height: 8),
@@ -310,7 +310,7 @@ class _OptionTile extends StatelessWidget {
   }
 }
 
-// ------------------------------------------------------------------ technical
+// technical
 class _Technical extends StatelessWidget {
   const _Technical({required this.items});
   final List<Map<String, dynamic>> items;
@@ -357,7 +357,7 @@ class _Technical extends StatelessWidget {
   }
 }
 
-// ------------------------------------------------------------------ coding
+// coding
 class _Coding extends StatelessWidget {
   const _Coding({required this.items});
   final List<Map<String, dynamic>> items;
@@ -481,7 +481,7 @@ class _Code extends StatelessWidget {
       );
 }
 
-// ------------------------------------------------------------------ behavioral
+// behavioral
 class _Behavioral extends StatelessWidget {
   const _Behavioral({required this.items, required this.toAsk});
   final List<Map<String, dynamic>> items;

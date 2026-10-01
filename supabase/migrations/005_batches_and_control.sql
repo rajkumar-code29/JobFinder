@@ -1,9 +1,6 @@
--- JobFinder: batches, admin kill switch, job deletion.
--- Run once in the Supabase SQL editor after 004_admin_tools.sql.
+-- Batches, kill switch, deleting jobs.
 
--- ---------------------------------------------------------------------------
--- Kill switch (admin only). While paused, runs stop at the next step and scheduled runs skip.
--- ---------------------------------------------------------------------------
+-- kill switch
 create table if not exists agent_control (
   id         int primary key default 1 check (id = 1),
   paused     boolean not null default false,
@@ -30,10 +27,7 @@ end $$;
 revoke all on function public.set_agents_paused(boolean, text) from public, anon;
 grant execute on function public.set_agents_paused(boolean, text) to authenticated;
 
--- ---------------------------------------------------------------------------
--- Batches: the Scout collects up to `batch_size` relevant jobs into Batch #N; they are salary-checked,
--- scored and ranked together, then tailored / coached / written one by one in score order.
--- ---------------------------------------------------------------------------
+-- batches
 create table if not exists batches (
   id          uuid primary key default gen_random_uuid(),
   user_id     uuid not null references auth.users(id) on delete cascade,
@@ -60,10 +54,8 @@ do $$ begin
   alter publication supabase_realtime add table batches, agent_control;
 exception when others then null; end $$;
 
--- ---------------------------------------------------------------------------
--- Delete a job: the row goes, a tiny "deleted" marker stays so the Scout never brings it back.
--- (The app deletes the job's files from storage first, through the storage API.)
--- ---------------------------------------------------------------------------
+-- delete a job but keep a seen_postings marker so it isn't found again
+-- (the app removes the files through the storage API first)
 drop policy if exists "own job files delete" on storage.objects;
 create policy "own job files delete" on storage.objects for delete to authenticated
   using (bucket_id = 'jobs' and (storage.foldername(name))[1] = auth.uid()::text);
@@ -79,7 +71,7 @@ begin
   if not found then
     raise exception 'Job % not found', p_job_id;
   end if;
-  -- same normalisation as db.fingerprint() in the pipeline
+  -- must match db.fingerprint()
   norm_company := trim(regexp_replace(lower(j.company), '[^[:alnum:]]+', ' ', 'g'));
   norm_title   := trim(regexp_replace(lower(j.title),   '[^[:alnum:]]+', ' ', 'g'));
   insert into seen_postings (user_id, source, external_id, fingerprint, context, relevance, reason)

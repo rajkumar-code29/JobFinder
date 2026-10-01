@@ -173,7 +173,7 @@ class AddedSkillsCard extends StatelessWidget {
             const Row(children: [
               Icon(Icons.warning_amber_rounded, color: Colors.amber),
               SizedBox(width: 8),
-              Expanded(child: Text('Adjacent skills added — review before applying', style: TextStyle(fontWeight: FontWeight.w600))),
+              Expanded(child: Text('Adjacent skills added - review before applying', style: TextStyle(fontWeight: FontWeight.w600))),
             ]),
             const SizedBox(height: 8),
             for (final s in skills)
@@ -343,8 +343,7 @@ class _ActionBar extends StatelessWidget {
   }
 }
 
-/// Pick which resume to send (tailored from this job's folder, or the parent), grab the cover letter,
-/// open the application page, then mark the job as applied.
+/// Choose a resume, download it and the cover letter, open the apply page, mark as applied.
 class ApplySheet extends StatefulWidget {
   const ApplySheet({super.key, required this.job});
   final Job job;
@@ -355,7 +354,7 @@ class ApplySheet extends StatefulWidget {
 
 class _ApplySheetState extends State<ApplySheet> {
   late final Future<List<String>> _parent = Api.parentFiles('resume');
-  String? _choice; // storage path; parent files are prefixed with "parent:"
+  String? _choice; // storage path, "parent:" prefix for parent files
 
   List<(String, String)> _options(List<String> parent) => [
         if (widget.job.files['resume_pdf'] != null) ('Tailored for this job · PDF', widget.job.files['resume_pdf']!),
@@ -481,7 +480,7 @@ class _ApplySheetState extends State<ApplySheet> {
 }
 
 
-/// 👍/👎 on what each agent produced; feeds the model scorecard (admin → AI models).
+/// Thumbs up/down per agent output, used by the scorecard.
 class _FeedbackCard extends StatefulWidget {
   const _FeedbackCard({required this.job});
   final Job job;

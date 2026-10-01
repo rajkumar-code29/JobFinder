@@ -1,11 +1,8 @@
-"""Head-to-head model comparison (admin → Models → Compare). Runs the same jobs through 2–4 candidate models for
-one agent, without touching the jobs themselves, and stores each output plus automatic metrics:
+"""Model comparisons (AI models -> Compare in the app).
 
-  scout   – relevance score vs the production rating
-  scorer  – ATS score / shortlist odds vs the production score
-  tailor  – ATS gain of the tailored resume, judged by the *production* scorer (fixed, so it's fair)
-  coach   – how many MCQ / technical / coding questions came back valid
-  writer  – word count; you judge quality in the app's blind A/B view
+Runs the same jobs through 2-4 models for one agent without saving anything to the jobs. Metrics:
+scout = score vs production, scorer = ATS, tailor = ATS gain judged by the normal scorer,
+coach = valid question counts, writer = word count (quality is voted on blind in the app).
 """
 from __future__ import annotations
 
@@ -22,7 +19,7 @@ log = logging.getLogger("jobfinder")
 
 
 def _jobs(user_id: str, agent: str, count: int) -> list[dict]:
-    """Recent jobs with what the agent needs (a scoring report for tailor/coach/writer)."""
+    """Recent jobs usable for this agent (tailor/coach/writer need a scoring report)."""
     q = db.sb.table("jobs").select("*").eq("user_id", user_id).order("created_at", desc=True).limit(80)
     rows = q.execute().data
     if agent in ("tailor", "coach", "writer"):
@@ -33,7 +30,7 @@ def _jobs(user_id: str, agent: str, count: int) -> list[dict]:
 
 
 def _one(agent: str, job: dict, profile: dict, brief: str, settings: dict, parent_docx: bytes | None) -> tuple[str, dict]:
-    """Run one agent once on one job with the currently routed model. Returns (output text, metrics)."""
+    """One agent on one job with the current routing -> (output, metrics)."""
     if agent == "scout":
         roles = settings.get("target_roles") or (profile.get("titles") or [])[:3]
         raw = RawJob(job["source"], job["external_id"], job["title"], job["company"], location=job["location"],
@@ -42,7 +39,7 @@ def _one(agent: str, job: dict, profile: dict, brief: str, settings: dict, paren
         if not rated:
             raise RuntimeError("no rating returned")
         score, why = rated[0][1], rated[0][2]
-        return f"{score}/100 – {why}", {"score": score, "production": job.get("relevance"),
+        return f"{score}/100 - {why}", {"score": score, "production": job.get("relevance"),
                                         "difference": None if job.get("relevance") is None else score - job["relevance"]}
     if agent == "scorer":
         rep = scorer.score(job, profile["resume_text"])
@@ -55,11 +52,11 @@ def _one(agent: str, job: dict, profile: dict, brief: str, settings: dict, paren
             raise RuntimeError("Tailoring needs a .docx parent resume")
         tailored, plan = tailor._pass(parent_docx, job, report, settings.get("target_ats") or 95)
         plan.pop("_model", None)
-        judged = scorer.score(job, docs.docx_text(tailored))  # production scorer routing: same judge for every model
+        judged = scorer.score(job, docs.docx_text(tailored))  # same judge for every model
         added = [a.get("skill") for a in plan.get("added_skills", []) if isinstance(a, dict)]
         text = ("Changes:\n" + "\n".join(f"• {c}" for c in plan.get("changes_summary", []))
                 + (f"\n\nAdjacent skills added: {', '.join(added)}" if added else "")
-                + "\n\n— Tailored resume —\n" + docs.docx_text(tailored))
+                + "\n\n--- Tailored resume ---\n" + docs.docx_text(tailored))
         before = job.get("ats_score")
         after = judged.get("ats_score")
         return text, {"ats_before": before, "ats_after": after,
@@ -106,7 +103,7 @@ def run(comparison_id: int) -> int:
         parent = db.download(files["resume_docx"], db.PARENT_BUCKET) if files and files.get("resume_docx") else None
         jobs = _jobs(uid, agent, comp["job_count"])
         if not jobs:
-            raise RuntimeError("No suitable jobs yet – run a batch first (tailor/coach/writer need scored jobs)")
+            raise RuntimeError("No suitable jobs yet - run a batch first (tailor/coach/writer need scored jobs)")
 
         base_routing = db.model_routing()
         done = 0
@@ -114,7 +111,7 @@ def run(comparison_id: int) -> int:
             for spec in models:
                 if control.paused():
                     raise llm.Paused("Agents paused by an admin")
-                llm.set_routing({**base_routing, agent: [spec]})  # only this model, no fallback
+                llm.set_routing({**base_routing, agent: [spec]})  # no fallback
                 started = time.monotonic()
                 try:
                     output, metrics = _one(agent, job, profile, brief, settings, parent)
@@ -122,7 +119,7 @@ def run(comparison_id: int) -> int:
                                "model_used": llm.last_model}
                 except llm.Paused:
                     raise
-                except Exception as exc:  # a model failing is a result too
+                except Exception as exc:
                     output, metrics = None, {"ok": False, "error": str(exc)[:500],
                                              "seconds": round(time.monotonic() - started, 1)}
                 db.sb.table("comparison_results").insert({

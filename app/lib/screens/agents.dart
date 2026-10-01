@@ -209,7 +209,7 @@ class _PipelineRunCard extends StatelessWidget {
 }
 
 
-/// Admin only: start the agents workflow now (the database holds the GitHub token and re-checks the email domain).
+/// Admin only.
 class _RunNowButton extends StatefulWidget {
   const _RunNowButton();
 
@@ -261,9 +261,9 @@ class _RunNowButtonState extends State<_RunNowButton> {
       toast(
         context,
         code == 204
-            ? 'Run started – it appears under Runs in a minute or two'
+            ? 'Run started - it appears under Runs in a minute or two'
             : code == null
-                ? 'Run requested – GitHub hasn\'t answered yet; check Runs shortly'
+                ? 'Run requested - GitHub hasn\'t answered yet; check Runs shortly'
                 : 'GitHub refused the run ($code): ${message ?? ''}',
       );
     } catch (e) {

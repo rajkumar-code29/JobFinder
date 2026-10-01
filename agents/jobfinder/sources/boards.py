@@ -1,6 +1,5 @@
-"""Company career boards added by URL in Settings. Public ATS feeds are read directly when the URL is
-recognised (Greenhouse, Lever, Ashby, Workable, Workday, SmartRecruiters); anything else (LinkedIn, Indeed,
-a custom careers page…) is searched through Gemini + Google Search instead."""
+"""Company boards from Settings. Known ATS URLs (Greenhouse, Lever, Ashby, Workable, Workday,
+SmartRecruiters) use their public feeds; anything else falls back to Google search."""
 from __future__ import annotations
 
 import logging
@@ -16,15 +15,15 @@ log = logging.getLogger("jobfinder")
 
 
 _SAFE = re.compile(r"[^A-Za-z0-9_.-]")
-_LOCALE = re.compile(r"^[a-z]{2}(-[A-Za-z]{2})?$")  # Workday URLs often start with /en-US/
+_LOCALE = re.compile(r"^[a-z]{2}(-[A-Za-z]{2})?$")  # /en-US/ etc.
 
 
 def detect(url: str) -> tuple[str, str] | None:
-    """Return (ats, slug) for known ATS URLs, else None."""
+    """(ats, slug) for a known ATS URL, else None."""
     u = urlparse(url if "://" in url else f"https://{url}")
     host, parts = u.netloc.lower(), [p for p in u.path.split("/") if p]
     if host.endswith((".myworkdayjobs.com", ".myworkdaysite.com")):
-        # https://<tenant>.wd5.myworkdayjobs.com/[en-US/]<site>/…
+        # https://<tenant>.wd5.myworkdayjobs.com/[en-US/]<site>/...
         parts = [p for p in parts if not _LOCALE.match(p)]
         if not parts:
             return None
@@ -112,14 +111,14 @@ def workable(slug: str) -> list[RawJob]:
 
 
 def workday(slug: str, roles: list[str]) -> list[RawJob]:
-    """Workday's career-site JSON API. The list only has titles/locations, so each job carries a `hydrate`
-    callable that the Scout runs for *new* jobs only (full description, country, employment type)."""
+    """Workday cxs API. The list has no descriptions, so each job gets a `hydrate` callable for the
+    details (only called for new jobs)."""
     host, tenant, site = slug.split("/")
     base = f"https://{host}/wday/cxs/{tenant}/{site}"
     headers = {"User-Agent": config.USER_AGENT, "Accept": "application/json", "Content-Type": "application/json"}
     seen: dict[str, dict] = {}
     for role in (roles or [""])[:3]:
-        for offset in (0, 20):  # Workday caps pages at 20
+        for offset in (0, 20):  # max page size is 20
             r = requests.post(f"{base}/jobs", json={"appliedFacets": {}, "limit": 20, "offset": offset, "searchText": role},
                               headers=headers, timeout=config.HTTP_TIMEOUT)
             r.raise_for_status()
@@ -153,7 +152,7 @@ def workday(slug: str, roles: list[str]) -> list[RawJob]:
 
 
 def smartrecruiters(slug: str, roles: list[str]) -> list[RawJob]:
-    """SmartRecruiters public Posting API (search by role, full description via `hydrate`)."""
+    """SmartRecruiters posting API, details via `hydrate`."""
     base = f"https://api.smartrecruiters.com/v1/companies/{slug}/postings"
     seen: dict[str, dict] = {}
     for role in (roles or [""])[:3]:
@@ -190,7 +189,7 @@ def smartrecruiters(slug: str, roles: list[str]) -> list[RawJob]:
     return jobs
 
 
-# Feeds that return every open job at the company ignore the roles argument.
+# These return every open job, so roles is ignored.
 FETCHERS = {
     "greenhouse": lambda slug, roles: greenhouse(slug),
     "lever": lambda slug, roles: lever(slug),
@@ -204,8 +203,7 @@ _board_cache: dict[str, list[RawJob]] = {}
 
 
 def fetch_board(url: str, roles: list[str]) -> tuple[list[RawJob], bool]:
-    """Returns (jobs, handled). handled=False means the URL needs the Google-search fallback.
-    Results are cached per run, so users following the same company share one fetch."""
+    """(jobs, handled). handled=False -> use Google search instead. Cached per run."""
     hit = detect(url)
     if not hit:
         return [], False
@@ -219,7 +217,7 @@ def fetch_board(url: str, roles: list[str]) -> tuple[list[RawJob], bool]:
 
 
 def hydrate(job: RawJob) -> None:
-    """Fill in details for feeds whose list endpoint is thin (Workday, SmartRecruiters)."""
+    """Load the details for Workday/SmartRecruiters jobs."""
     fn = job.extra.pop("hydrate", None)
     if not fn:
         return

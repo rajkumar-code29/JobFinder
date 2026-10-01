@@ -1,4 +1,4 @@
-"""Upload a user's parent resume / cover letter from the command line (the app can do this too).
+"""Upload someone's resume / cover letter from the command line.
 
   python -m jobfinder.upload_parent --email you@example.com --resume ~/Documents/Me_Resume.docx ~/Documents/Me_Resume.pdf --cover ~/Documents/Cover\\ Letter.docx
 """

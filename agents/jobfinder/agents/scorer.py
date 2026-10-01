@@ -1,4 +1,4 @@
-"""Scorer agent: weighs the JD against a resume. It only produces scores + suggestions, never edits."""
+"""ATS score and suggestions for a resume vs a JD. Doesn't edit anything."""
 from __future__ import annotations
 
 import json
@@ -36,13 +36,13 @@ skill not evidenced in the resume but closely related to skills it does show."""
 def score(job: dict, resume_text: str) -> dict:
     return llm.ask_json(PROMPT.format(title=job["title"], company=job["company"], location=job["location"],
                                       jd=job["description"][:14000], resume=resume_text[:20000]), system=SYSTEM, temperature=0,
-                        agent="scorer")  # one routed model for parent + every re-score keeps scores comparable
+                        agent="scorer")
 
 
 def report_markdown(job: dict, rep: dict, tailored: dict | None = None) -> str:
     km = rep.get("keyword_match") or {}
     lines = [
-        f"# Suggestions Report — {job['title']} @ {job['company']}",
+        f"# Suggestions Report - {job['title']} @ {job['company']}",
         f"Job ID: `{job['job_id']}`",
         "",
         f"**ATS score (parent resume):** {rep.get('ats_score')}%  ",
@@ -52,9 +52,9 @@ def report_markdown(job: dict, rep: dict, tailored: dict | None = None) -> str:
         rep.get("summary", ""),
         "",
         "## Keywords",
-        f"- **Matched:** {', '.join(km.get('matched', [])) or '—'}",
-        f"- **Missing (required):** {', '.join(km.get('missing_required', [])) or '—'}",
-        f"- **Missing (nice to have):** {', '.join(km.get('missing_nice_to_have', [])) or '—'}",
+        f"- **Matched:** {', '.join(km.get('matched', [])) or '-'}",
+        f"- **Missing (required):** {', '.join(km.get('missing_required', [])) or '-'}",
+        f"- **Missing (nice to have):** {', '.join(km.get('missing_nice_to_have', [])) or '-'}",
         "",
         "## Strengths", *[f"- {s}" for s in rep.get("strengths", [])],
         "", "## Gaps", *[f"- {s}" for s in rep.get("gaps", [])],
@@ -62,7 +62,7 @@ def report_markdown(job: dict, rep: dict, tailored: dict | None = None) -> str:
     ]
     for s in rep.get("suggestions", []):
         tag = " _(adjacent skill)_" if s.get("adjacent_skill") else ""
-        lines.append(f"- **[{s.get('impact', '').upper()}] {s.get('section')}** — {s.get('change')}{tag}  \n  _{s.get('reason')}_")
+        lines.append(f"- **[{s.get('impact', '').upper()}] {s.get('section')}** - {s.get('change')}{tag}  \n  _{s.get('reason')}_")
     if rep.get("interview_focus"):
         lines += ["", "## Likely interview focus", *[f"- {s}" for s in rep["interview_focus"]]]
     if tailored:

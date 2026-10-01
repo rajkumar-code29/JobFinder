@@ -1,5 +1,4 @@
-"""All ISO 3166 countries (common names) plus aliases/cities used for search and location matching.
-Generated from pycountry; hand-edited names for common usage."""
+"""ISO 3166 countries (from pycountry, some names shortened) and aliases/cities for location matching."""
 
 COUNTRIES: dict[str, str] = {
     'af': 'Afghanistan',

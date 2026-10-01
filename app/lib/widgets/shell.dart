@@ -1,7 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:go_router/go_router.dart';
 
-/// Bottom navigation on phones, a side rail on wide screens.
+/// Bottom nav on phones, rail on wide screens.
 class AppShell extends StatelessWidget {
   const AppShell({super.key, required this.location, required this.child});
   final String location;

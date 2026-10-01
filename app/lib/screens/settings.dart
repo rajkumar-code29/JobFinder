@@ -382,7 +382,7 @@ class _SliderRow extends StatelessWidget {
       ]);
 }
 
-/// Upload / replace the parent resume and cover letter, and show what the Profile agent learned.
+/// Parent resume / cover letter upload.
 class _ParentDocs extends StatefulWidget {
   const _ParentDocs();
 
@@ -469,7 +469,7 @@ const providerInfo = {
   'rapidapi': ('RapidAPI · JSearch', 'rapidapi.com (JSearch free plan)', Icons.hub_outlined),
 };
 
-/// The user's own API keys. Tried top to bottom; when one hits its limit the agents switch to the next.
+/// The user's own keys, tried in order.
 class _ApiKeys extends StatefulWidget {
   const _ApiKeys();
 
@@ -535,8 +535,8 @@ class _ApiKeysState extends State<_ApiKeys> {
                   borderRadius: BorderRadius.circular(8),
                 ),
                 child: Text(
-                  '${shared ? 'After your own keys, the shared keys are used as a last fallback.' : 'Only your own keys are used — add at least one Gemini key.'}'
-                  '  Limit: ${account?['llm_calls_per_run'] ?? '—'} Gemini calls per hourly run.',
+                  '${shared ? 'After your own keys, the shared keys are used as a last fallback.' : 'Only your own keys are used - add at least one Gemini key.'}'
+                  '  Limit: ${account?['llm_calls_per_run'] ?? '-'} Gemini calls per hourly run.',
                   style: theme.textTheme.bodySmall,
                 ),
               ),
@@ -553,7 +553,7 @@ class _ApiKeysState extends State<_ApiKeys> {
                 if (!keys.any((k) => k['provider'] == entry.key))
                   Padding(
                     padding: const EdgeInsets.only(left: 24, top: 4),
-                    child: Text(shared ? 'No own keys – using shared keys' : 'No keys', style: theme.textTheme.bodySmall),
+                    child: Text(shared ? 'No own keys - using shared keys' : 'No keys', style: theme.textTheme.bodySmall),
                   ),
                 for (final (i, k) in keys.where((k) => k['provider'] == entry.key).indexed) _KeyTile(index: i + 1, data: k, onDelete: () => _delete(k)),
               ],
@@ -604,7 +604,7 @@ class _AddKeyDialog extends StatefulWidget {
   const _AddKeyDialog({required this.existing, this.shared = false});
   final List<Map<String, dynamic>> existing;
 
-  /// true = add to the shared pool (admin), false = the user's own keys
+  /// add to shared_api_keys instead of api_keys
   final bool shared;
 
   @override
@@ -651,7 +651,7 @@ class _AddKeyDialogState extends State<_AddKeyDialog> {
       _saving = true;
       _error = null;
     });
-    // New keys go to the end of the fallback order for that provider.
+    // append to the end of the order
     final last = widget.existing
         .where((k) => k['provider'] == _provider)
         .fold<int>(-1, (m, k) => ((k['priority'] as int?) ?? 0) > m ? (k['priority'] as int? ?? 0) : m);
@@ -787,7 +787,7 @@ class _AddKeyDialogState extends State<_AddKeyDialog> {
 }
 
 
-/// Search all countries, or add whatever was typed as a custom location (city, region…).
+/// Country search, or add free text as a custom location.
 class LocationPicker extends StatefulWidget {
   const LocationPicker({super.key, required this.existing});
   final List<String> existing;
@@ -806,7 +806,7 @@ class LocationPickerState extends State<LocationPicker> {
     bool hit(MapEntry<String, String> e) =>
         e.value.toLowerCase().contains(q) || e.key == q || (countryAliases[e.key] ?? const []).any((a) => a.startsWith(q));
     final found = all.where(hit).toList()
-      // names starting with the query first
+      // prefix matches first
       ..sort((a, b) => (b.value.toLowerCase().startsWith(q) ? 1 : 0) - (a.value.toLowerCase().startsWith(q) ? 1 : 0));
     return found;
   }
@@ -870,8 +870,7 @@ class LocationPickerState extends State<LocationPicker> {
 }
 
 
-/// Admin only (@rajkumar.codes): the shared key pool used for the owner's runs (and users allowed to share it).
-/// Includes the keys stored as GitHub secrets – listed by their last 4 characters, the values stay in GitHub.
+/// Admin: shared key pool, including the GitHub secret keys (shown by their last 4 chars).
 class _SharedKeys extends StatefulWidget {
   const _SharedKeys();
 

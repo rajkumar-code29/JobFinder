@@ -1,4 +1,4 @@
-"""Scout agents: fetch postings from every enabled source, keep only resume-relevant ones, store them."""
+"""Finds postings, keeps the relevant ones, saves them."""
 from __future__ import annotations
 
 import hashlib
@@ -38,8 +38,7 @@ def _hour() -> int:
 
 
 def source_plan(settings: dict, roles: list[str], force_all: bool, pools: dict) -> list[tuple[str, callable]]:
-    """(label, fetch) for every source due this run, in the order they're scanned: the user's own company
-    boards first (highest intent), then the aggregators. The Scout stops as soon as the batch is full."""
+    """Sources due this run, company boards first, then the aggregators."""
     countries = [normalize_location(c) for c in settings["countries"]] or ["us"]
     src = settings.get("sources") or {}
     hour = _hour()
@@ -69,7 +68,7 @@ def source_plan(settings: dict, roles: list[str], force_all: bool, pools: dict) 
 
 
 def prefilter(jobs: list[RawJob], settings: dict, profile: dict, roles: list[str]) -> list[RawJob]:
-    """Cheap keyword gate before spending LLM calls."""
+    """Keyword filter before spending LLM calls."""
     countries = [normalize_location(c) for c in settings["countries"]]
     excludes = [x.lower() for x in settings.get("exclude_keywords") or []]
     role_words = {w for r in roles for w in r.lower().split() if len(w) > 2 and w not in {"senior", "junior", "lead", "engineer", "developer", "and"}}
@@ -103,7 +102,7 @@ def rate(jobs: list[RawJob], settings: dict, profile_brief: str, roles: list[str
                 remote=settings["remote_ok"], jobs=listing), agent="scout", temperature=0)
         except llm.StopUser:
             raise
-        except Exception as exc:  # one bad batch shouldn't lose the rest; these jobs get re-rated next run
+        except Exception as exc:  # skip this chunk, it gets rated next run
             log.warning("relevance batch failed: %s", exc)
             continue
         scores = {int(r["i"]): r for r in res if isinstance(r, dict) and "i" in r} if isinstance(res, list) else {}
@@ -115,7 +114,7 @@ def rate(jobs: list[RawJob], settings: dict, profile_brief: str, roles: list[str
 
 def run(run: db.PipelineRun, settings: dict, profile: dict, profile_brief: str, pools: dict,
         force_all: bool = False, limit: int | None = None, should_stop=lambda: False) -> int:
-    """Scan sources one at a time; rate what's new; store relevant jobs (best first) until `limit` are stored."""
+    """Scan source by source and stop once `limit` jobs are saved."""
     roles = settings.get("target_roles") or (profile.get("titles") or [])[:3]
     if not roles:
         raise RuntimeError("No target roles: set them in Settings or upload a resume first")
@@ -134,16 +133,16 @@ def run(run: db.PipelineRun, settings: dict, profile: dict, profile_brief: str, 
         except llm.StopUser:
             raise
         except Exception:
-            continue  # already logged as an agent error; the other sources still run
+            continue  # logged by run.agent
         run.scanned += len(raw)
         keep = _evaluate(run, raw, fps, settings, profile, profile_brief, roles, context, threshold)
         for job, score, why in sorted(keep, key=lambda x: -x[1]):
             if limit is not None and stored >= limit:
-                break  # rated and remembered: picked up for a later batch without asking the AI again
+                break  # the rest are in seen_postings for the next batch
             if _store(run, job, score, why):
                 stored += 1
         if limit is not None and stored >= limit:
-            run.note(f"Found {stored} relevant jobs – enough for this batch, stopping the scan")
+            run.note(f"Found {stored} relevant jobs - enough for this batch, stopping the scan")
             break
     run.matched += stored
     return stored
@@ -151,7 +150,7 @@ def run(run: db.PipelineRun, settings: dict, profile: dict, profile_brief: str, 
 
 def _evaluate(run: db.PipelineRun, raw: list[RawJob], fps: set[str], settings: dict, profile: dict,
               profile_brief: str, roles: list[str], context: str, threshold: int) -> list[tuple[RawJob, int, str]]:
-    """De-duplicate, skip postings already rated or deleted, then rate the rest. Returns the relevant ones."""
+    """Dedupe, skip anything already rated or deleted, rate the rest."""
     fresh: list[RawJob] = []
     by_source: dict[str, list[RawJob]] = {}
     for j in raw:
@@ -174,9 +173,9 @@ def _evaluate(run: db.PipelineRun, raw: list[RawJob], fps: set[str], settings: d
         if prev is None:
             unseen.append(j)
         elif prev["relevance"] >= threshold:
-            reuse.append((j, prev["relevance"], prev["reason"]))  # rated earlier and relevant: no AI call
+            reuse.append((j, prev["relevance"], prev["reason"]))
         else:
-            skipped += 1  # rejected earlier, or deleted by the user
+            skipped += 1
 
     unseen = _hydrate_new(run, unseen)
     reused_jobs = {id(j) for j in _hydrate_new(run, [j for j, _, _ in reuse])}
@@ -201,7 +200,7 @@ def _evaluate(run: db.PipelineRun, raw: list[RawJob], fps: set[str], settings: d
 
 
 def _store(run: db.PipelineRun, job: RawJob, score: int, why: str) -> bool:
-    """Save a relevant job, loading the complete description from the posting page when the feed only had a snippet."""
+    """Insert a job, fetching the full description if the feed only had a snippet."""
     if len(job.description) < 800 or job.description == NA:
         _enrich(job)
     row = job.as_row()
@@ -213,14 +212,13 @@ def _store(run: db.PipelineRun, job: RawJob, score: int, why: str) -> bool:
     try:
         db.insert_job(row)
         return True
-    except Exception as exc:  # unique violation from a concurrent insert, etc.
+    except Exception as exc:
         log.warning("insert failed for %s: %s", job.title, exc)
         return False
 
 
 def rating_context(profile: dict, settings: dict, roles: list[str]) -> str:
-    """What a relevance rating depends on. If the resume, roles, locations or remote preference change,
-    earlier ratings no longer apply and postings are rated again."""
+    """Hash of what a rating depends on. Changing resume/roles/locations means re-rating."""
     basis = {
         "resume": profile.get("resume_hash"),
         "roles": sorted(r.lower().strip() for r in roles),
@@ -234,8 +232,7 @@ MAX_HYDRATE_PER_RUN = 40
 
 
 def _hydrate_new(run: db.PipelineRun, jobs: list[RawJob]) -> list[RawJob]:
-    """Workday/SmartRecruiters lists are title-only: fetch full details for new jobs only (capped per run).
-    Jobs beyond the cap are skipped this run and picked up by a later one."""
+    """Load details for Workday/SmartRecruiters jobs (title-only lists), capped per run."""
     thin = [j for j in jobs if "hydrate" in j.extra]
     if not thin:
         return jobs

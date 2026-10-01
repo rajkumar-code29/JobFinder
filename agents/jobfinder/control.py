@@ -1,4 +1,4 @@
-"""Admin kill switch (Home → Pause agents). Checked before every source, job step and Gemini call."""
+"""Kill switch (agent_control.paused), cached for a few seconds."""
 from __future__ import annotations
 
 import logging
@@ -19,7 +19,7 @@ def paused() -> bool:
     try:
         rows = db.sb.table("agent_control").select("paused").eq("id", 1).execute().data
         value = bool(rows and rows[0]["paused"])
-    except Exception as exc:  # table missing (migration 005 not applied) → never paused
+    except Exception as exc:  # no table before migration 005
         log.debug("agent_control unavailable: %s", exc)
         value = False
     _cache = (time.monotonic(), value)

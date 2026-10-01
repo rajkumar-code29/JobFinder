@@ -1,4 +1,4 @@
-"""Document helpers: text extraction, in-place .docx tailoring, cover-letter .docx, PDF conversion."""
+"""docx/pdf helpers."""
 from __future__ import annotations
 
 import copy
@@ -18,9 +18,9 @@ DOCX_MIME = "application/vnd.openxmlformats-officedocument.wordprocessingml.docu
 PDF_MIME = "application/pdf"
 
 
-# ---------------------------------------------------------------- extraction
+# extraction
 def _iter_paragraphs(doc):
-    """Body paragraphs followed by paragraphs inside tables (many resume templates use tables)."""
+    """Body paragraphs, then table cells (lots of resume templates are tables)."""
     yield from doc.paragraphs
     for table in doc.tables:
         for row in table.rows:
@@ -51,19 +51,15 @@ def any_text(filename: str, data: bytes) -> str:
     return data.decode("utf-8", errors="ignore")
 
 
-# ---------------------------------------------------------------- tailoring
+# tailoring
 def numbered_paragraphs(data: bytes) -> list[dict]:
-    """[{idx, text}] for every non-empty paragraph – the Tailor agent edits by idx."""
+    """[{idx, text}] for non-empty paragraphs. The tailor edits by idx."""
     doc = Document(io.BytesIO(data))
     return [{"idx": i, "text": p.text} for i, p in enumerate(_iter_paragraphs(doc)) if p.text.strip()]
 
 
 def _set_text(paragraph, new_text: str) -> None:
-    """Replace text while keeping the paragraph's formatting.
-
-    If the paragraph starts with a differently-formatted label run (e.g. bold "Skills:") and the
-    new text keeps that label, the label run is preserved and the rest goes into the next run.
-    """
+    """Replace the text but keep formatting. Keeps a leading label run like a bold "Skills:"."""
     runs = paragraph.runs
     if not runs:
         paragraph.add_run(new_text)
@@ -80,14 +76,14 @@ def _set_text(paragraph, new_text: str) -> None:
 
 
 def apply_edits(data: bytes, edits: list[dict], inserts: list[dict]) -> bytes:
-    """edits: [{idx, new_text}] replace; inserts: [{after_idx, text}] clone paragraph after idx (same style/bullet)."""
+    """Apply edits [{idx, new_text}] and inserts [{after_idx, text}] (inserts copy the paragraph's style)."""
     doc = Document(io.BytesIO(data))
     paragraphs = list(_iter_paragraphs(doc))
     for e in edits:
         i = int(e.get("idx", -1))
         if 0 <= i < len(paragraphs) and e.get("new_text", "").strip():
             _set_text(paragraphs[i], e["new_text"].strip())
-    # Insert bottom-up so earlier indices stay valid.
+    # bottom-up so indices stay valid
     for ins in sorted(inserts, key=lambda x: int(x.get("after_idx", -1)), reverse=True):
         i = int(ins.get("after_idx", -1))
         if 0 <= i < len(paragraphs) and ins.get("text", "").strip():
@@ -100,7 +96,7 @@ def apply_edits(data: bytes, edits: list[dict], inserts: list[dict]) -> bytes:
     return out.getvalue()
 
 
-# ---------------------------------------------------------------- cover letter
+# cover letter
 def cover_letter_docx(header: dict, letter: dict) -> bytes:
     doc = Document()
     style = doc.styles["Normal"]
@@ -135,7 +131,7 @@ def cover_letter_docx(header: dict, letter: dict) -> bytes:
     return out.getvalue()
 
 
-# ---------------------------------------------------------------- pdf
+# pdf
 def _soffice() -> str | None:
     for cand in ("soffice", "libreoffice", "/Applications/LibreOffice.app/Contents/MacOS/soffice"):
         path = shutil.which(cand) or (cand if Path(cand).exists() else None)
@@ -145,7 +141,7 @@ def _soffice() -> str | None:
 
 
 def docx_to_pdf(data: bytes, stem: str) -> bytes | None:
-    """Convert with LibreOffice (installed in the GitHub Action). Returns None if unavailable."""
+    """LibreOffice conversion, None if soffice isn't installed."""
     exe = _soffice()
     if not exe:
         return None

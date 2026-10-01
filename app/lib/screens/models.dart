@@ -7,22 +7,22 @@ import 'package:go_router/go_router.dart';
 import '../api.dart';
 import '../widgets/common.dart';
 
-/// Agents, what they need from a model, and the built-in routing (mirrors DEFAULT_ROUTING in agents/jobfinder/llm.py).
+/// Keep the defaults in sync with DEFAULT_ROUTING in llm.py.
 const agentModelInfo = {
-  'scout': ('Scout', 'Rates relevance in bulk – speed and volume matter', ['gemini:flash-lite']),
-  'salary': ('Salary', 'Needs live web search → Gemini only', ['gemini:flash-lite', 'gemini:flash']),
-  'search': ('Job search', 'Google-grounded job discovery → Gemini only', ['gemini:flash-lite', 'gemini:flash']),
-  'scorer': ('Scorer', 'ATS score before and after tailoring – keep one model for consistency', ['gemini:flash-lite']),
+  'scout': ('Scout', 'Rates relevance in bulk - speed and volume matter', ['gemini:flash-lite']),
+  'salary': ('Salary', 'Needs live web search > Gemini only', ['gemini:flash-lite', 'gemini:flash']),
+  'search': ('Job search', 'Google-grounded job discovery > Gemini only', ['gemini:flash-lite', 'gemini:flash']),
+  'scorer': ('Scorer', 'ATS score before and after tailoring - keep one model for consistency', ['gemini:flash-lite']),
   'tailor': ('Tailor', 'Highest quality, long input, strict edit rules', ['gemini:flash', 'gemini:flash-lite']),
   'coach': ('Coach', 'Very long output (MCQ, technical, coding)', ['gemini:flash', 'gemini:flash-lite']),
   'writer': ('Writer', 'Natural writing, short output', ['gemini:flash', 'gemini:flash-lite']),
   'profile': ('Profile', 'Reads your resume once per upload', ['gemini:flash', 'gemini:flash-lite']),
 };
 
-/// Suggestions in the editor; any "provider:model id" can be typed too.
+/// Editor suggestions (anything provider:model works).
 const suggestedModels = {
-  'gemini:flash': 'Gemini Flash – all versions, newest first (20/day each)',
-  'gemini:flash-lite': 'Gemini Flash-Lite – all versions, newest first (500/day each)',
+  'gemini:flash': 'Gemini Flash - all versions, newest first (20/day each)',
+  'gemini:flash-lite': 'Gemini Flash-Lite - all versions, newest first (500/day each)',
   'groq:openai/gpt-oss-120b': 'Groq · gpt-oss-120b (1k/day, prompts up to ~7.5k tokens)',
   'groq:openai/gpt-oss-20b': 'Groq · gpt-oss-20b (1k/day, prompts up to ~7.5k tokens)',
   'groq:qwen/qwen3.8-27b': 'Groq · Qwen 3.8 27B (1k/day, prompts up to ~7.5k tokens)',
@@ -55,7 +55,7 @@ class ModelsScreen extends StatelessWidget {
   }
 }
 
-// ------------------------------------------------------------------------------------------------ routing
+// routing
 class _RoutingTab extends StatefulWidget {
   const _RoutingTab();
 
@@ -75,7 +75,7 @@ class _RoutingTabState extends State<_RoutingTab> {
     try {
       result.reset ? await Api.resetRouting(agent) : await Api.saveRouting(agent, result.chain);
       setState(() => _future = Api.modelRouting());
-      if (mounted) toast(context, 'Saved – used from the next run');
+      if (mounted) toast(context, 'Saved - used from the next run');
     } catch (e) {
       if (mounted) toast(context, 'Could not save: $e');
     }
@@ -231,7 +231,7 @@ class _ChainEditorState extends State<_ChainEditor> {
   }
 }
 
-// ------------------------------------------------------------------------------------------------ scorecard
+// scorecard
 class _ScorecardTab extends StatefulWidget {
   const _ScorecardTab();
 
@@ -265,10 +265,10 @@ class _ScorecardTabState extends State<_ScorecardTab> {
               ),
             ]),
             const SizedBox(height: 8),
-            Text('Success = answered / (answered + every kind of refusal or failure). 👍/👎 come from Jobs → job → '
+            Text('Success = answered / (answered + every kind of refusal or failure). 👍/👎 come from Jobs > job > '
                 '"Rate the AI\'s work".', style: Theme.of(context).textTheme.bodySmall),
             const SizedBox(height: 12),
-            if (rows.isEmpty) const Text('No AI calls recorded yet – the scorecard fills in as the agents run.'),
+            if (rows.isEmpty) const Text('No AI calls recorded yet - the scorecard fills in as the agents run.'),
             if (rows.isNotEmpty)
               SingleChildScrollView(
                 scrollDirection: Axis.horizontal,
@@ -298,9 +298,9 @@ class _ScorecardTabState extends State<_ScorecardTab> {
                           final fails = n(r, 'rate_limited') + n(r, 'overloaded') + n(r, 'invalid_json') + n(r, 'too_large') + n(r, 'errors');
                           final total = n(r, 'ok') + fails;
                           final pct = total == 0 ? null : (n(r, 'ok') * 100 / total).round();
-                          return Text(pct == null ? '—' : '$pct%', style: TextStyle(color: scoreColor(context, pct)));
+                          return Text(pct == null ? '-' : '$pct%', style: TextStyle(color: scoreColor(context, pct)));
                         })),
-                        DataCell(Text(r['avg_seconds'] == null ? '—' : '${r['avg_seconds']}')),
+                        DataCell(Text(r['avg_seconds'] == null ? '-' : '${r['avg_seconds']}')),
                         DataCell(Text('${n(r, 'rate_limited')}')),
                         DataCell(Text('${n(r, 'overloaded')}')),
                         DataCell(Text('${n(r, 'invalid_json')}')),
@@ -317,7 +317,7 @@ class _ScorecardTabState extends State<_ScorecardTab> {
       );
 }
 
-// ------------------------------------------------------------------------------------------------ compare
+// compare
 class _CompareTab extends StatelessWidget {
   const _CompareTab();
 
@@ -326,7 +326,7 @@ class _CompareTab extends StatelessWidget {
     if (req == null) return;
     try {
       await Api.requestComparison(req.$1, req.$2, req.$3);
-      if (context.mounted) toast(context, 'Comparison started – results appear here in a few minutes');
+      if (context.mounted) toast(context, 'Comparison started - results appear here in a few minutes');
     } catch (e) {
       if (context.mounted) toast(context, '$e'.replaceFirst(RegExp(r'^.*?message: '), ''));
     }
@@ -340,7 +340,7 @@ class _CompareTab extends StatelessWidget {
           return PageBody(
             maxWidth: 860,
             child: ListView(padding: const EdgeInsets.all(16), children: [
-              Text('Runs the same jobs from your latest batch through each candidate model for one agent – nothing '
+              Text('Runs the same jobs from your latest batch through each candidate model for one agent - nothing '
                   'in your jobs changes. Metrics are measured automatically; for writing you pick the best blind.',
                   style: Theme.of(context).textTheme.bodySmall),
               const SizedBox(height: 12),
@@ -360,7 +360,7 @@ class _CompareTab extends StatelessWidget {
                     }, color: switch (c['status']) { 'done' => Colors.green, 'error' => Colors.red, _ => Colors.orange }),
                     title: Text('#${c['id']} · ${agentModelInfo[c['agent']]?.$1 ?? c['agent']} · ${c['job_count']} jobs'),
                     subtitle: Text('${(c['models'] as List).map((m) => modelLabel('$m')).join('  vs  ')}\n'
-                        '${c['status']}${c['message'] != null ? ' – ${c['message']}' : ''}'),
+                        '${c['status']}${c['message'] != null ? ' - ${c['message']}' : ''}'),
                     isThreeLine: true,
                     onTap: () => context.go('/models/compare/${c['id']}'),
                   ),
@@ -401,7 +401,7 @@ class _NewComparisonState extends State<_NewComparison> {
                 onChanged: (v) => setState(() => _agent = v ?? 'writer'),
               ),
               const SizedBox(height: 12),
-              Text('Models (2–4)', style: Theme.of(context).textTheme.labelLarge),
+              Text('Models (2-4)', style: Theme.of(context).textTheme.labelLarge),
               for (final m in {...suggestedModels.keys, ..._models})
                 CheckboxListTile(
                   dense: true,
@@ -455,7 +455,7 @@ class _NewComparisonState extends State<_NewComparison> {
       );
 }
 
-/// Results of one comparison: automatic metrics per model, then a blind A/B/C review per job.
+/// Metrics per model, then a blind review per job.
 class ComparisonScreen extends StatefulWidget {
   const ComparisonScreen({super.key, required this.id});
   final int id;
@@ -509,7 +509,7 @@ class _ComparisonScreenState extends State<ComparisonScreen> {
             }
             final wins = {for (final m in models) m: _votes.values.where((w) => w == m).length};
 
-            // Averages of numeric metrics per model
+            // per-model averages
             final summary = <String, Map<String, double>>{};
             for (final m in models) {
               final ok = results.where((r) => r['model'] == m && (r['metrics'] as Map)['ok'] == true).toList();
@@ -544,13 +544,13 @@ class _ComparisonScreenState extends State<ComparisonScreen> {
                         DataCell(Text(modelLabel(m))),
                         DataCell(Text('${summary[m]!['ok']!.toInt()}/${summary[m]!['total']!.toInt()}')),
                         for (final k in metricKeys)
-                          DataCell(Text(summary[m]![k] == null ? '—' : summary[m]![k]!.toStringAsFixed(1))),
+                          DataCell(Text(summary[m]![k] == null ? '-' : summary[m]![k]!.toStringAsFixed(1))),
                         DataCell(Text('${wins[m]}')),
                       ]),
                   ]),
                 ),
                 const SizedBox(height: 20),
-                Text('Blind review – pick the best output per job', style: Theme.of(context).textTheme.titleMedium),
+                Text('Blind review - pick the best output per job', style: Theme.of(context).textTheme.titleMedium),
                 const SizedBox(height: 4),
                 Text('Model names are hidden until you vote.', style: Theme.of(context).textTheme.bodySmall),
                 for (final entry in byJob.entries) _BlindJob(
@@ -579,7 +579,7 @@ class _BlindJob extends StatelessWidget {
     final out = r['output'] as String?;
     if (out == null) return 'Failed: ${(r['metrics'] as Map)['error']}';
     if (out.trimLeft().startsWith('{')) {
-      try {  // interview pack: show a readable digest
+      try {  // interview pack
         final p = jsonDecode(out) as Map<String, dynamic>;
         final mcq = (p['mcq'] as List? ?? []).take(3).map((q) => '• ${q['question']}').join('\n');
         final tech = (p['technical'] as List? ?? []).take(2).map((q) => '• ${q['question']}').join('\n');
@@ -592,7 +592,7 @@ class _BlindJob extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    // Stable shuffle per job so option letters don't reveal the model order.
+    // fixed shuffle per job so A/B/C doesn't give the model away
     final shuffled = [...results]..shuffle(Random(jobId.hashCode ^ comparisonId));
     final theme = Theme.of(context);
     return Card(

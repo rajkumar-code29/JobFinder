@@ -1,4 +1,4 @@
-"""Free job-search APIs. Each function returns list[RawJob] and never raises for a single bad query."""
+"""Job APIs (Adzuna, JSearch, Remotive, Arbeitnow). A failing query is logged and skipped."""
 from __future__ import annotations
 
 import logging
@@ -17,14 +17,14 @@ _feed_cache: dict[str, list[RawJob]] = {}
 
 
 def _cached(name: str, fetch) -> list[RawJob]:
-    """Keyless feeds are the same for every user: fetch once per run, hand each user a copy."""
+    """Keyless feeds: fetch once per run, give each user a copy."""
     if name not in _feed_cache:
         _feed_cache[name] = fetch()
     return [j.clone() for j in _feed_cache[name]]
 
 
 def _pooled_get(pool: KeyPool, build) -> dict | None:
-    """GET with key fallback. build(key) -> (url, params, headers). Returns None once every key is used up."""
+    """GET with key fallback. build(key) -> (url, params, headers). None if no key works."""
     for _ in range(len(pool.keys) * 3 + 1):
         try:
             key = pool.get()
@@ -58,7 +58,7 @@ ADZUNA_COUNTRIES = {"gb", "us", "au", "at", "be", "br", "ca", "ch", "de", "es", 
 
 
 def adzuna(roles: list[str], countries: list[str], pool: KeyPool) -> list[RawJob]:
-    """https://developer.adzuna.com – free key. Descriptions are snippets; the Scout enriches them later."""
+    """Adzuna. Descriptions are snippets; the scout fetches the full page later."""
     if not pool:
         log.info("Adzuna: no key, skipping")
         return []
@@ -90,7 +90,7 @@ def adzuna(roles: list[str], countries: list[str], pool: KeyPool) -> list[RawJob
                     apply_url=r.get("redirect_url", NA), employment_type=r.get("contract_time") or NA,
                     posted_at=r.get("created") or NA,
                 )
-                # Adzuna's "predicted" salaries are model estimates, not from the JD – let the Salary agent decide.
+                # "predicted" salaries are Adzuna's own guesses, not from the posting
                 if lo and not predicted:
                     job.salary_min, job.salary_max, job.salary_currency = lo, hi, CURRENCY.get(cc, NA)
                     job.salary_text = format_salary(lo, hi, job.salary_currency, "year")
@@ -101,15 +101,14 @@ def adzuna(roles: list[str], countries: list[str], pool: KeyPool) -> list[RawJob
 
 
 def jsearch(roles: list[str], countries: list[str], pool: KeyPool) -> list[RawJob]:
-    """JSearch on RapidAPI (Google for Jobs index: LinkedIn, Indeed, Glassdoor…). Free tier = 200 req/month,
-    so we send one combined query per country and the pipeline only calls this once a day."""
+    """JSearch (RapidAPI). Free plan is 200 req/month, so one query per country, once a day."""
     if not pool:
         log.info("JSearch: no key, skipping")
         return []
     jobs = []
     query_roles = " OR ".join(roles[:3])
     for cc in countries:
-        if not is_country(cc):  # JSearch needs an ISO country; custom locations are covered by Google search
+        if not is_country(cc):  # needs an ISO country
             continue
         try:
             data = _pooled_get(pool, lambda k, cc=cc: (
@@ -143,8 +142,7 @@ def jsearch(roles: list[str], countries: list[str], pool: KeyPool) -> list[RawJo
 
 
 def remotive(roles: list[str], countries: list[str]) -> list[RawJob]:
-    """https://remotive.com/api – remote jobs, full descriptions. They ask for ≤4 calls/day, so we pull the whole
-    recent feed once (every 6h, shared by all users) and let the Scout filter it per user."""
+    """Remotive. They ask for max 4 calls a day, so we pull the whole feed every 6h and filter locally."""
     return _cached("remotive", _remotive_feed)
 
 
@@ -169,7 +167,7 @@ def _remotive_feed() -> list[RawJob]:
 
 
 def arbeitnow(roles: list[str], countries: list[str]) -> list[RawJob]:
-    """https://www.arbeitnow.com/api – Europe-focused feed with no search param; the Scout filters it."""
+    """Arbeitnow (mostly Europe). No search param, filtered locally."""
     return _cached("arbeitnow", _arbeitnow_feed)
 
 

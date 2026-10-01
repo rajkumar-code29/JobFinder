@@ -1,255 +1,137 @@
 # JobFinder
 
-Hourly job-hunting agents plus a Flutter app (web on your subdomain + iPhone), built entirely on free tiers.
+I got tired of scrolling job boards and rewriting my resume for every application, so I built this. A set of
+agents runs every hour, finds jobs that actually match my resume, tailors a copy of my resume for each one,
+writes a cover letter and puts together interview prep. I check the results in a Flutter app, on the web at
+jobs.rajkumar.codes or on my iPhone, and apply from there.
 
-```
-GitHub Actions (hourly cron)                     Supabase (free)                 Flutter app
-┌───────────────────────────────┐   writes   ┌──────────────────────┐  reads  ┌───────────────────┐
-│ Profile  → knows parent resume│──────────▶ │ Postgres: jobs,      │ ◀────── │ Home stats (live) │
-│ Scout    → APIs + Google search│           │  settings, profile,  │         │ Job cards → detail│
-│ Salary   → JD / Glassdoor est. │           │  agent_runs, runs    │         │ Apply (pick resume│
-│ Scorer   → ATS + suggestions   │           │ Storage:             │         │  from job folder) │
-│ Tailor   → job-specific resume │           │  parent/  (masters)  │         │ Interview prep    │
-│ Coach    → MCQ/tech/coding prep│           │  jobs/<job_id>/ …    │         │ Settings/uploads  │
-│ Writer   → cover letter        │           └──────────────────────┘         └───────────────────┘
-└───────────────────────────────┘   LLM: Gemini (Google AI Studio free key) with Google Search grounding
-```
+Everything runs on free tiers: GitHub Actions for the agents, Supabase for the database, auth and files,
+Gemini for the AI work, and Cloudflare for the website and the hourly trigger.
 
-Every captured job gets its own folder `jobs/<job_id>/`:
+## What it does
 
-| File | Made by |
+Each run works in batches of up to 20 jobs:
+
+1. **Scout** looks at the company career pages I've added and a few job APIs, and keeps only jobs that fit my
+   resume. Once it has 20 it stops, and those 20 become the next batch.
+2. **Salary** takes the salary from the posting, or estimates it from salary sites. If there's nothing, it's NA.
+3. **Scorer** gives every job an ATS score against my resume and ranks the batch.
+4. **Tailor, Coach and Writer** then go through the jobs best-first: a tailored resume (my original .docx with
+   edits, same file name), interview prep (MCQs with explanations, technical and coding questions) and a cover
+   letter.
+
+Every job gets its own folder in storage with the job details, the scoring report, the tailored resume (docx
+and pdf), the cover letter and the interview pack. In the app I can open a job, pick which resume to send,
+open the application page, mark it applied, or delete it.
+
+A new batch only starts once the current one is done. On free tiers that's a few jobs an hour.
+
+## Job sources
+
+| Source | Notes |
 |---|---|
-| `job.json` | Scout (company, JD, salary, links; missing values = `NA`) |
-| `report.json`, `Suggestions Report.md` | Scorer (+ Tailor appends before/after scores) |
-| `<Your parent resume name>.docx` / `.pdf` | Tailor |
-| `tailored_report.json` | Tailor (includes **added adjacent skills** to review) |
-| `interview.json` | Coach |
-| `Cover Letter.docx` / `.pdf` | Writer |
+| Company boards on Greenhouse, Lever, Ashby, Workable, Workday, SmartRecruiters | Read from their public feeds, so you get every opening with the full description. This is the best source. |
+| Adzuna | Free key, 19 countries |
+| JSearch (RapidAPI) | LinkedIn/Indeed/Glassdoor postings. 200 requests a month, so it runs once a day. |
+| Remotive, Arbeitnow | No key needed |
+| Google search through Gemini | Every 4 hours. Also used for board links without an API, like LinkedIn or a plain careers page. |
 
-## Job sources (no scraping)
+Nothing gets scraped. For LinkedIn, Indeed and similar sites only the domain is used, for a Google `site:` search.
 
-| Source | Cost | Cadence |
-|---|---|---|
-| Adzuna API | free key | hourly |
-| Arbeitnow API | free, no key | hourly |
-| Remotive API | free, no key | every 6h (their limit) |
-| JSearch (Google for Jobs: LinkedIn/Indeed/Glassdoor…) | free 200 req/month | once a day (06 UTC) |
-| Gemini + Google Search | free | every 4h |
-| Your board links: Greenhouse / Lever / Ashby / Workable / Workday / SmartRecruiters | free public feeds | hourly |
-| Any other link (LinkedIn, Indeed, Naukri, careers page) | Gemini `site:` search | every 4h |
+## Setup
 
-### What to paste in *Job boards & career pages*
-| Link | How it's read |
-|---|---|
-| `boards.greenhouse.io/<company>`, `jobs.lever.co/<company>`, `jobs.ashbyhq.com/<company>`, `apply.workable.com/<company>` | Company's public feed: every open job, full descriptions |
-| `<company>.wd5.myworkdayjobs.com/en-US/<SiteName>` | Workday feed, searched by your roles; full details loaded for new jobs only (40 per run) |
-| `jobs.smartrecruiters.com/<CompanyId>` | SmartRecruiters feed, searched by your roles |
-| `linkedin.com`, `indeed.com`, `naukri.com`, `glassdoor.com`, … | Not visited. Google search limited to the site's job pages (`site:linkedin.com/jobs/view …`), max 10 results every 4h, short descriptions. Only the domain matters; search filters in the link are ignored. JSearch (RapidAPI key) covers LinkedIn/Indeed/Glassdoor better. |
-| Any other careers page | Google `site:` search on that domain/path. Tip: if its Apply buttons go to one of the platforms above, paste that link instead. |
+It takes about half an hour the first time.
 
----
+**Supabase**
+1. Create a free project and run the files in `supabase/migrations/` in order (001 to 007) in the SQL editor.
+   Create your own user first (Authentication > Users > Add user, tick Auto Confirm) because 002 makes the
+   oldest user the owner.
+2. Turn off "Allow new users to sign up" under Authentication > Sign In / Providers.
+3. Authentication > URL Configuration: set the Site URL to the web app's address and add `https://<site>/**`
+   under Redirect URLs. Without this, invite and reset emails open localhost:3000.
+4. Grab the project URL, the publishable key and the secret key from the API settings.
+5. Store the GitHub token for the Run now button (004 has the exact line):
+   `select vault.create_secret('<token>', 'gh_dispatch_token', 'JobFinder');`
 
-## Setup (≈30 minutes, one time)
+**Keys**
+- Gemini: aistudio.google.com/apikey (required)
+- Adzuna: developer.adzuna.com (app id + key)
+- JSearch on RapidAPI, Groq: optional
 
-### 1. Supabase
-1. Create a free project at <https://supabase.com>.
-2. **SQL Editor** → paste and run [`supabase/migrations/001_init.sql`](supabase/migrations/001_init.sql).
-   After creating your user (step 3), also run [`002_multi_user.sql`](supabase/migrations/002_multi_user.sql).
-   Check: **Table Editor** shows `settings, profile, jobs, pipeline_runs, agent_runs`; **Storage** shows buckets `parent` and `jobs`.
-3. Left sidebar **Authentication → Users → Add user → Create new user**, tick **Auto Confirm User**.
-   This is your *app* login. It is separate from your supabase.com account, but it can use the same email/password.
-4. **Authentication → Sign In / Providers**: turn **off** "Allow new users to sign up" (only you can log in).
-5. Get the connection values (or click **Connect** at the top of the project page):
-   - Project URL: **Project Settings → Data API** (`https://<ref>.supabase.co`) → `SUPABASE_URL`
-   - Publishable key `sb_publishable_…` (or legacy `anon`): **Project Settings → API Keys** → `SUPABASE_ANON_KEY` (app)
-   - Secret key `sb_secret_…` (or legacy `service_role`): same page → `SUPABASE_SERVICE_ROLE_KEY` (agents only, keep private)
-6. Once the domain is live: **Authentication → URL Configuration** → Site URL `https://jobs.<your-domain>` and add
-   `https://jobs.<your-domain>/**` under Redirect URLs. **Required for invites and password resets**. Until it's set,
-   email links open `http://localhost:3000`.
+Free Gemini may use prompts to improve their models, and your resume is part of the prompts.
 
-### 2. API keys
-- Gemini: <https://aistudio.google.com/apikey>
-- Adzuna: <https://developer.adzuna.com> (app id + key)
-- Optional JSearch: subscribe to the free plan at <https://rapidapi.com/letscrape-6bRBa3QguO5/api/jsearch>
+**GitHub**
 
-> Free-tier Gemini may use prompts to improve Google's models. Your resume is sent to it. Enable billing
-> on the AI Studio project (still free within limits) if you want that turned off.
+Add these repository secrets: `SUPABASE_URL`, `SUPABASE_SERVICE_ROLE_KEY`, `SUPABASE_ANON_KEY`,
+`GEMINI_API_KEY` (or `GEMINI_API_KEYS=k1,k2`), `ADZUNA_APP_ID`, `ADZUNA_APP_KEY`, and optionally
+`RAPIDAPI_KEY` and `GROQ_API_KEY`. For the website and the scheduler also add `CLOUDFLARE_API_TOKEN`,
+`CLOUDFLARE_ACCOUNT_ID` and `GH_DISPATCH_TOKEN`.
 
-### 3. GitHub repo + hourly agents
-1. Push this folder to a **private** GitHub repo.
-2. **Settings → Secrets and variables → Actions → Secrets**: add
-   `SUPABASE_URL`, `SUPABASE_SERVICE_ROLE_KEY`, `SUPABASE_ANON_KEY`, `GEMINI_API_KEY`,
-   `ADZUNA_APP_ID`, `ADZUNA_APP_KEY`, `RAPIDAPI_KEY` (optional),
-   `CLOUDFLARE_API_TOKEN`, `CLOUDFLARE_ACCOUNT_ID` (step 4).
-   For fallback keys use the list forms instead/as well: `GEMINI_API_KEYS=k1,k2`, `ADZUNA_KEYS=id1:key1,id2:key2`,
-   `RAPIDAPI_KEYS=k1,k2` (see *Users & API keys* below).
-3. Optional **Variables**: `GEMINI_MODEL`, `GEMINI_FAST_MODEL`.
-4. **Actions → Job agents (hourly) → Run workflow** to test. After that it runs every hour.
+The Cloudflare token needs Pages: Edit and Workers Scripts: Edit. `GH_DISPATCH_TOKEN` is a fine-grained token
+for this repo only, with Actions: Read and write.
 
-### 4. Web app on your subdomain (Cloudflare Pages, free)
-1. Sign up / log in at <https://dash.cloudflare.com>.
-2. **Account ID**: shown in the dashboard URL (`dash.cloudflare.com/<account-id>/…`) and on
-   **Workers & Pages** (right sidebar) → GitHub secret `CLOUDFLARE_ACCOUNT_ID`.
-3. **API token**: profile icon → **My Profile → API Tokens → Create Token → Create Custom Token**,
-   permission **Account · Cloudflare Pages · Edit**, account resources = your account → GitHub secret `CLOUDFLARE_API_TOKEN`.
-4. GitHub → **Actions → Deploy web app → Run workflow**. The first run creates the `jobfinder` Pages project
-   and deploys; the app is then live at `https://jobfinder.pages.dev` (Cloudflare may add a suffix if taken).
-5. Cloudflare → **Workers & Pages → jobfinder → Custom domains → Set up a custom domain** → `jobs.<your-domain>`.
-   - Domain's DNS on Cloudflare: the record is created for you.
-   - DNS elsewhere (GoDaddy, Namecheap, Google/Squarespace…): add at your registrar a **CNAME** record,
-     name `jobs`, value `jobfinder.pages.dev` (use the exact value Cloudflare shows). Activation takes minutes to a few hours.
-6. Supabase → **Authentication → URL Configuration** → Site URL `https://jobs.<your-domain>`.
+**Cloudflare**
+1. Run the "Deploy web app" workflow. It creates the Pages project and deploys.
+2. Add your domain under the Pages project's Custom domains. If DNS is elsewhere, add the CNAME it shows.
+3. Run "Deploy hourly scheduler". That's a small Worker that starts the agents at :07 every hour, because
+   GitHub's own cron can be hours late. The GitHub cron is still there as a backup every 3 hours.
 
-### 4b. Punctual hourly runs (Cloudflare scheduler, free)
-GitHub's own cron is best-effort and often hours late, so a tiny Cloudflare Worker (`scheduler/`) starts the
-agents workflow every hour at :07 UTC. GitHub's cron stays as a 3-hourly backup; duplicate runs are skipped.
-1. GitHub → profile → **Settings → Developer settings → Personal access tokens → Fine-grained tokens → Generate new token**:
-   repository access **Only select repositories → JobFinder**, permission **Actions: Read and write**. Pick an
-   expiry and note it (the Worker stops starting runs when the token expires).
-   Save it as the GitHub secret **`GH_DISPATCH_TOKEN`**.
-2. Cloudflare → **My Profile → API Tokens** → edit the deploy token → add **Account · Workers Scripts · Edit**.
-3. GitHub → **Actions → Deploy hourly scheduler → Run workflow**.
-   Logs: Cloudflare → Workers & Pages → `jobfinder-scheduler` → Logs.
+**In the app**
 
-### 5. Upload your parent documents
-Sign in → **Settings → Parent documents** → upload your resume (**.docx** is required for tailoring; add the
-.pdf too) and your master cover letter. Set countries, roles and board links, then **Save**.
+Sign in, then go to Settings: upload the resume as .docx (plus the PDF and a master cover letter), add a
+Gemini key, and pick locations and roles. The Getting started card on Home lists whatever's still missing.
 
-Or from the command line:
+**iPhone**
 ```bash
-cd agents && python -m jobfinder.upload_parent --email you@example.com --resume ~/Documents/Me_Resume.docx ~/Documents/Me_Resume.pdf --cover ~/Documents/Cover\ Letter.docx
+cd app && cp env.example.json env.json   # fill in
+flutter build ios --release --dart-define-from-file=env.json
 ```
+Then install with Xcode or `xcrun devicectl device install app`. Keep the repo outside iCloud-synced folders,
+because iCloud offloads files and breaks code signing. There are export options for TestFlight in `app/ios/`.
 
-### 6. iPhone app
-> Keep this repo outside iCloud-synced folders (e.g. `~/Developer/JobFinder`, not `~/Documents`). iCloud offloads
-> files when the disk is low, which hangs Python/git, and its file attributes break iOS code signing
-> (*"resource fork, Finder information, or similar detritus not allowed"*).
+## Other users
+
+Friends can use it too. Add them in Supabase (Authentication > Users). They get their own settings and only
+ever see their own jobs, which row-level security enforces. They use their own API keys unless I switch on
+shared keys for them in Settings > Users. That screen also shows whether each person is set up, their last
+run and how much storage they use.
+
+As the project owner I can still see everything in the Supabase dashboard. The privacy notice in the app
+says so.
+
+## Admin bits
+
+Accounts on @rajkumar.codes get the admin tools:
+
+- **Pause all** on Home is a kill switch for every agent.
+- **Run now** under Agents.
+- **Shared keys** in Settings, including which key is currently in use.
+- **Users** panel.
+- **AI models**:
+  - per-agent model order, e.g. Groq for the Scout and Gemini for tailoring
+  - a scorecard per model
+  - comparisons that run the same jobs through different models, with a blind vote on the results
+
+## Limits and how it copes
+
+- Gemini Flash models have 20 free requests a day each and Flash-Lite 500. The cheap, high-volume work
+  (rating, scoring, salary, search) goes to Flash-Lite. Flash is kept for tailoring, interview prep and cover
+  letters, and the agents work through every Flash version before falling back.
+- On 429s the agents slow down. After 4 in a row, or 12 in a run, they stop for that run and pause the key
+  for an hour. On 503s they move to the next model. Broken JSON gets repaired or retried once.
+- When Google retires a model, the agents pick the newest one in the same family and note it in the run log.
+- Postings that were already rated aren't rated again. Deleted jobs don't come back. Jobs I never applied to
+  are deleted after 30 days.
+- GitHub Actions minutes are unlimited because the repo is public. There are no secrets in the repo.
+
+## Running locally
 
 ```bash
-cd app && cp env.example.json env.json   # fill in URL + anon key
-open ios/Runner.xcworkspace              # Signing & Capabilities → pick your Apple ID team
-flutter run --release --dart-define-from-file=env.json   # with the iPhone plugged in
-```
-With a free Apple ID the install expires after 7 days (just re-run). A paid developer account removes that.
-You can also open `https://jobs.<your-domain>` in Safari → Share → **Add to Home Screen**.
-
----
-
-## Onboarding new users
-Run [`007_onboarding_and_users.sql`](supabase/migrations/007_onboarding_and_users.sql).
-- **Home → Getting started** lists what a user still has to do (resume .docx, AI key, locations, roles, then optional
-  extras) and shows why their agents are waiting, straight from the latest run.
-- **Settings → API keys → Add API key** explains, per provider, how to get the key and has a **Test key** button
-  (runs from the user's device; the key never passes through the database).
-- **Help** (the ? icon) explains the screens, batches, expected speed and the common log messages.
-- A one-time **privacy notice** on first login.
-- **Settings → Users** (admin): setup status, last run and its note, jobs, batch, storage per user; turn a user's agents
-  on/off, allow shared keys, set AI calls per run.
-- Jobs never marked Applied are deleted automatically after 30 days (`JOB_RETENTION_DAYS`), files included.
-
-## Users & API keys
-
-**Each user only sees their own data.** Jobs, files, settings, API keys and agent activity are isolated by
-Supabase row-level security, and files live under `parent/<user-id>/…` and `jobs/<user-id>/<job-id>/…`.
-As the Supabase project owner you can still see everything in the Supabase dashboard.
-
-**Add a user:** Supabase → Authentication → Users → **Invite user** (they get an email, open the link, and the app asks
-them to choose a password), or **Add user → Create new user** with a password you give them. Their settings are created
-automatically; they then upload their resume and add their own API keys in Settings. Anyone can use
-**Forgot password?** on the login screen. Supabase's built-in email sender only allows a few emails per hour.
-
-**Limits are per user:**
-- Each user's agents use **their own keys first**. The shared keys (GitHub secrets) are only used for the owner,
-  or for users you allow:
-  ```sql
-  update accounts set use_shared_keys = true, llm_calls_per_run = 20
-  where user_id = (select id from auth.users where email = 'friend@example.com');
-  ```
-- `llm_calls_per_run` caps each user's Gemini calls per hourly run (owner 60, others 40 by default).
-- Pause a user: `update accounts set enabled = false where …`.
-
-**Key fallback:** keys are tried in order. When one hits its limit the next is used, and the spent key is parked
-until it resets (Gemini: midnight Pacific; Adzuna: next hour or next day; RapidAPI monthly quota: the 1st), so
-later runs skip it. Invalid keys are parked for 24 h. Users see each key's status in Settings → API keys.
-- Gemini's free quota belongs to a Google Cloud **project**, so extra keys only add quota if they come from
-  different projects.
-- Check each provider's terms before using several free accounts to get around its limits.
-  Google and Adzuna don't allow it, and they can suspend accounts that do.
-- Everyone's agents run on the owner's GitHub Actions minutes.
-
-## How a run works (batches)
-1. **Scout**: scans your company boards first, then the aggregators, and stops once it has `batch_size` (default 20,
-   Settings) relevant jobs with full descriptions. They become **Batch #N**. No new scanning while a batch is open;
-   relevant jobs found beyond the batch size wait for the next batch (already rated, no extra AI calls).
-2. **Salary**: missing salaries for every job in the batch (checked once per job).
-3. **Scorer**: ATS-scores every job, then ranks the batch (#1 = highest score).
-4. **Tailor → Coach → Writer**: one job at a time in rank order, `max_jobs_per_run` per hourly run, until the batch is done.
-In the app, Jobs are grouped by batch and sorted by rank; each job has **Applied / Not applied** and **Delete**
-(removes the job, its files and its row; a tiny marker keeps the Scout from bringing it back).
-Run [`005_batches_and_control.sql`](supabase/migrations/005_batches_and_control.sql) for batches, delete and the kill switch.
-
-## Admin tools (`@rajkumar.codes` accounts)
-Run [`004_admin_tools.sql`](supabase/migrations/004_admin_tools.sql), then store the GitHub token for **Run now**
-in Supabase Vault (SQL editor, your fine-grained token with *Actions: Read and write* on this repo):
-```sql
-select vault.create_secret('github_pat_…', 'gh_dispatch_token', 'Starts the JobFinder agents workflow');
-```
-- **Settings → Shared keys (admin):** the shared key pool, including GitHub-secret keys (shown by their last 4
-  characters). See which key is **In use**, when it was last used, whether it's paused and why; switch keys on/off,
-  **Use this key first**, add or remove keys stored in the app.
-- **Agents → Run now:** starts the agents workflow (at most once every 5 minutes).
-- **Home → Pause all / Resume:** kill switch. Running agents stop at their next step; scheduled runs skip until resumed.
-  Everyone sees a "paused" banner.
-- The database enforces admin access (`public.is_admin()`), not just the UI.
-
-## AI models per agent (admin → Agents → ⎈ AI models)
-Run [`006_models.sql`](supabase/migrations/006_models.sql) first.
-- **Routing:** an ordered model list per agent (Scout, Salary, Job search, Scorer, Tailor, Coach, Writer, Profile).
-  `gemini:flash` / `gemini:flash-lite` = every available model of that family, newest first. Other providers:
-  `groq:<model>` (free: ~1k requests/day per model, but prompts must stay under ~7.5k tokens, so it suits Scout and
-  Writer), `openrouter:<model>:free` (50/day). Salary and job search need web search, so Gemini only. Providers
-  without a key are skipped. Add keys in Settings → API keys (or Shared keys), or as GitHub secrets
-  `GROQ_API_KEY` / `OPENROUTER_API_KEY`.
-- **Scorecard:** per agent and model: successes, speed, limits hit, overloads, bad JSON, prompts too big, 👍/👎
-  (users rate each job's tailored resume, interview prep and cover letter on the job page).
-- **Compare:** runs the same jobs from your latest batch through 2–4 models for one agent without changing them.
-  Automatic metrics (e.g. ATS gain judged by the production scorer) plus a blind "pick the best" review.
-
-## Gemini safety stop
-Per-minute rejections (429) are counted per user per run: 4 in a row or 12 in total stop all Gemini work for that run
-and pause the rejected keys for 1 hour. Google-grounded search gives up after 2 and is skipped for the rest of the run.
-Each request waits at most 90 s (search 30 s); the workflow is capped at 40 minutes. Rejections and Google's reasons
-appear live in the run log (Agents → Runs).
-
-## Local development
-```bash
-# agents
 cd agents && python3 -m venv .venv && .venv/bin/pip install -r requirements.txt
-cp .env.example .env    # fill in
+cp .env.example .env
 .venv/bin/python -m jobfinder.pipeline --trigger manual --all-sources
-.venv/bin/python -m jobfinder.pipeline --job JF-20260927-ABCDE    # reprocess one job
-.venv/bin/python -m jobfinder.pipeline --user you@example.com      # one user only
+.venv/bin/python -m jobfinder.pipeline --job JF-20260930-ABCDE   # redo one job
+.venv/bin/python -m jobfinder.pipeline --user me@example.com     # one user
 
-# app
 cd app && flutter run -d chrome --dart-define-from-file=env.json
 ```
-
-## Free-tier budget notes
-- By default work is routed by model (change it per agent under AI models). **flash-lite** (free tier ~15/min, 500/day per model) does relevance rating, ATS scoring,
-  salary lookups and Google job search. **flash** (~5/min, 20/day per model) does tailoring, interview prep and cover
-  letters, about 3–4 calls per job.
-- `GEMINI_MODEL` / `GEMINI_FAST_MODEL` default to `auto` (newest stable model of each family). Every model version has
-  its own daily allowance, so when one is used up the agents move to the next version, then to flash-lite. With the
-  current free tier that's roughly 25–30 fully flash-quality jobs a day. Set `GEMINI_USE_ALL_MODELS=false` to use just one.
-- `max_jobs_per_run` (Settings, default 3) and each user's `llm_calls_per_run` cap usage. Jobs that don't
-  fit in a run stay queued and resume from their last finished stage.
-- Free-tier limits differ per model and change over time. On *too many requests* the agents widen the gap between
-  calls (up to 60 s) and wait up to 4 min per request. If the main model's daily or free-tier limit is used up on every
-  key, the rest of the run uses the light model, and the run log names Google's quota (e.g. `…PerDay…, limit 20`).
-  Your real limits are shown in AI Studio under *Usage & limits*.
-- Google retires Gemini versions over time. If a model is retired, the agents switch to the newest model of the same
-  family and say so in the run log (Agents → Runs); update `GEMINI_MODEL` / `GEMINI_FAST_MODEL` when you see that.
-- GitHub Actions minutes: unlimited on a **public** repo, 2,000 min/month on a private one. A scan-only run takes
-  ~2 min, and a run that processes jobs takes up to ~8 min (Gemini free-tier pacing), so hourly on a private repo can exceed
-  2,000 min. Options: make the repo public (no secrets or personal files live in it: keys are Action secrets and
-  your resume lives in Supabase), or change the cron in `.github/workflows/agents.yml` to every 2 hours (`7 */2 * * *`).

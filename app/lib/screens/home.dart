@@ -27,7 +27,7 @@ class _HomeScreenState extends State<HomeScreen> {
   void initState() {
     super.initState();
     _load();
-    // Any agent activity changes the counters: refresh stats (debounced) whenever the live feed ticks.
+    // reload stats when agent activity changes
     _sub = Api.agentRunsStream(limit: 30).listen((runs) {
       setState(() => _runs = runs);
       _debounce?.cancel();
@@ -159,7 +159,7 @@ class _StatGrid extends StatelessWidget {
 }
 
 
-/// Kill switch. Everyone sees when the agents are paused; only admins (@rajkumar.codes) can pause or resume.
+/// Pause banner for everyone, pause/resume button for admins.
 class AgentControlCard extends StatelessWidget {
   const AgentControlCard({super.key});
 
@@ -170,7 +170,7 @@ class AgentControlCard extends StatelessWidget {
         builder: (ctx) => AlertDialog(
           title: const Text('Pause all agents?'),
           content: const Text('The running agents stop at their next step (usually within a minute) and scheduled '
-              'runs are skipped until you resume. Nothing is lost – work continues where it stopped.'),
+              'runs are skipped until you resume. Nothing is lost - work continues where it stopped.'),
           actions: [
             TextButton(onPressed: () => Navigator.pop(ctx, false), child: const Text('Cancel')),
             FilledButton(onPressed: () => Navigator.pop(ctx, true), child: const Text('Pause agents')),
@@ -181,7 +181,7 @@ class AgentControlCard extends StatelessWidget {
     }
     try {
       await Api.setAgentsPaused(paused);
-      if (context.mounted) toast(context, paused ? 'Agents paused' : 'Agents resumed – they continue on the next run');
+      if (context.mounted) toast(context, paused ? 'Agents paused' : 'Agents resumed - they continue on the next run');
     } catch (e) {
       if (context.mounted) toast(context, 'Could not change: $e');
     }
@@ -192,7 +192,7 @@ class AgentControlCard extends StatelessWidget {
         stream: Api.controlStream(),
         builder: (context, snap) {
           final control = snap.data;
-          if (snap.hasError || control == null) return const SizedBox.shrink(); // migration 005 not applied yet
+          if (snap.hasError || control == null) return const SizedBox.shrink();
           final admin = Api.isAdmin;
           if (!control.paused && !admin) return const SizedBox.shrink();
           final theme = Theme.of(context);

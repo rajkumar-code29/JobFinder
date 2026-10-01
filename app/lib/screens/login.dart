@@ -34,7 +34,7 @@ class _LoginScreenState extends State<LoginScreen> {
     }
     setState(() => _busy = true);
     try {
-      // On the web, come back to this site; on the phone app, Supabase uses the site URL (the web app).
+      // null on iOS -> Supabase uses the site URL
       await Supabase.instance.client.auth.resetPasswordForEmail(email, redirectTo: kIsWeb ? Uri.base.origin : null);
       _show(info: 'If $email has an account, a link to set a new password is on its way. Check spam too.');
     } on AuthException catch (e) {

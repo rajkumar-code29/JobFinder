@@ -9,14 +9,14 @@ import 'models.dart';
 
 SupabaseClient get supa => Supabase.instance.client;
 
-/// Every user's data lives under their own id (database rows and storage folders).
+/// Rows and storage folders are keyed by this.
 String get uid => supa.auth.currentUser!.id;
 
 class Api {
   static const jobsBucket = 'jobs';
   static const parentBucket = 'parent';
 
-  // ---------------------------------------------------------------- stats & activity
+  // stats & activity
   static Future<Stats> stats() async =>
       Stats(await supa.from('dashboard_stats').select().single());
 
@@ -30,7 +30,7 @@ class Api {
   static Future<List<Map<String, dynamic>>> pipelineRuns({int limit = 30}) =>
       supa.from('pipeline_runs').select().order('started_at', ascending: false).limit(limit);
 
-  // ---------------------------------------------------------------- jobs
+  // jobs
   static Stream<List<Job>> jobsStream() => supa
       .from('jobs')
       .stream(primaryKey: ['id'])
@@ -57,7 +57,7 @@ class Api {
   static Future<void> setApplied(Job job, bool applied) =>
       applied ? markApplied(job.jobId, 'marked in the app') : unmarkApplied(job.jobId);
 
-  /// Deletes the job's files, then the job itself. A tiny "deleted" marker stays so the Scout never brings it back.
+  /// Files first, then the row (delete_job leaves a marker so the scout skips it).
   static Future<void> deleteJob(String jobId) async {
     final dir = '$uid/$jobId';
     final files = await supa.storage.from(jobsBucket).list(path: dir);
@@ -66,7 +66,7 @@ class Api {
     await supa.rpc('delete_job', params: {'p_job_id': jobId});
   }
 
-  // ---------------------------------------------------------------- batches
+  // batches
   static Stream<List<Batch>> batchesStream() => supa
       .from('batches')
       .stream(primaryKey: ['id'])
@@ -74,13 +74,13 @@ class Api {
       .limit(100)
       .map((rows) => rows.map(Batch.new).toList());
 
-  // ---------------------------------------------------------------- kill switch
+  // kill switch
   static Stream<AgentControl?> controlStream() => supa
       .from('agent_control')
       .stream(primaryKey: ['id'])
       .map((rows) => rows.isEmpty ? null : AgentControl(rows.first));
 
-  // ---------------------------------------------------------------- models (admin): routing, scorecard, comparisons
+  // models (admin)
   static Future<Map<String, List<String>>> modelRouting() async {
     final rows = await supa.from('model_routing').select('agent,chain');
     return {for (final r in rows) r['agent'] as String: List<String>.from(r['chain'] as List)};
@@ -117,7 +117,7 @@ class Api {
       .from('comparison_votes')
       .upsert({'comparison_id': id, 'job_id': jobId, 'user_id': uid, 'winner': winner});
 
-  // ---------------------------------------------------------------- 👍/👎 on a job's AI output (any user)
+  // feedback
   static Future<Map<String, int>> myFeedback(String jobId) async {
     final rows = await supa.from('model_feedback').select('agent,rating').eq('job_id', jobId).eq('user_id', uid);
     return {for (final r in rows) r['agent'] as String: (r['rating'] as num).toInt()};
@@ -128,10 +128,10 @@ class Api {
       : supa.from('model_feedback').upsert(
           {'user_id': uid, 'job_id': jobId, 'agent': agent, 'model': model, 'rating': rating});
 
-  // ---------------------------------------------------------------- onboarding
+  // onboarding
   static Future<void> acceptPrivacy() => supa.rpc('accept_privacy');
 
-  /// What a new user still has to set up before their agents can work.
+  /// What's still missing for the agents to run.
   static Future<SetupStatus> setupStatus() async {
     final results = await Future.wait([
       parentFiles('resume'),
@@ -163,7 +163,7 @@ class Api {
     );
   }
 
-  // ---------------------------------------------------------------- admin: users
+  // admin: users
   static Future<List<Map<String, dynamic>>> adminUsers() async =>
       List<Map<String, dynamic>>.from(await supa.rpc('admin_users') as List);
 
@@ -178,14 +178,14 @@ class Api {
   static Future<void> setAgentsPaused(bool paused) =>
       supa.rpc('set_agents_paused', params: {'p_paused': paused, 'p_reason': paused ? 'Paused from the app' : null});
 
-  // ---------------------------------------------------------------- files
+  // files
   static Future<String> readText(String path, {String bucket = jobsBucket}) async =>
       utf8.decode(await supa.storage.from(bucket).download(path));
 
   static Future<Map<String, dynamic>> readJson(String path) async =>
       jsonDecode(await readText(path)) as Map<String, dynamic>;
 
-  /// Opens a file in a new tab (web) or the system viewer (iOS). Signed URLs keep the bucket private.
+  /// Opens a signed URL (new tab on web, system viewer on iOS).
   static Future<void> openFile(String path, {String bucket = jobsBucket, bool download = true}) async {
     final url = await supa.storage.from(bucket).createSignedUrl(
           path,
@@ -195,7 +195,7 @@ class Api {
     await launchUrl(Uri.parse(url), mode: LaunchMode.externalApplication);
   }
 
-  /// Parent documents live in `parent/<uid>/resume/` and `parent/<uid>/cover_letter/`.
+  /// `parent/<uid>/<folder>/`
   static Future<List<String>> parentFiles(String folder) async {
     final dir = '$uid/$folder';
     final items = await supa.storage.from(parentBucket).list(path: dir);
@@ -221,7 +221,7 @@ class Api {
     return 'text/plain';
   }
 
-  // ---------------------------------------------------------------- settings & profile
+  // settings & profile
   static Future<Map<String, dynamic>> settings() => supa.from('settings').select().eq('user_id', uid).single();
 
   static Future<void> saveSettings(Map<String, dynamic> values) =>
@@ -233,12 +233,12 @@ class Api {
       .eq('user_id', uid)
       .single();
 
-  /// Per-user limits set by the owner (read-only for the user).
+  /// Limits set by the admin.
   static Future<Map<String, dynamic>?> account() =>
       supa.from('accounts').select().eq('user_id', uid).maybeSingle();
 
-  // ---------------------------------------------------------------- API keys
-  // Key values are write-only: the database never returns them to the app, only the last 4 characters.
+  // API keys
+  // key_value is write-only, the DB only returns the hint
   static const _keyColumns = 'id,provider,label,app_id,hint,priority,exhausted_until,last_error,last_used_at,created_at';
 
   static Future<List<Map<String, dynamic>>> apiKeys() =>
@@ -261,7 +261,7 @@ class Api {
 
   static Future<void> deleteApiKey(String id) => supa.from('api_keys').delete().eq('id', id);
 
-  // ---------------------------------------------------------------- admin (@rajkumar.codes) tools
+  // admin
   static bool get isAdmin =>
       (supa.auth.currentUser?.email ?? '').toLowerCase().endsWith('@${AppConfig.adminEmailDomain}');
 
@@ -291,11 +291,11 @@ class Api {
 
   static Future<void> deleteSharedKey(String id) => supa.from('shared_api_keys').delete().eq('id', id);
 
-  /// Starts the agents workflow on GitHub (via the database, which holds the GitHub token). Returns a request id.
+  /// Dispatches the workflow through the DB (it holds the GitHub token).
   static Future<int> requestAgentsRun({bool allSources = true}) async =>
       (await supa.rpc('request_agents_run', params: {'all_sources': allSources}) as num).toInt();
 
-  /// GitHub's answer for a request: 204 = started. Null while the request is still in flight.
+  /// (status, message) from GitHub, 204 = started. Null until it answers.
   static Future<(int?, String?)> agentsRunRequestStatus(int id) async {
     final rows = await supa.rpc('agents_run_request_status', params: {'p_id': id}) as List;
     if (rows.isEmpty) return (null, null);

@@ -1,4 +1,4 @@
-"""Coach agent: interview prep pack (MCQ with explanations, technical Q&A, coding problems, behavioral)."""
+"""Interview prep pack: MCQs, technical, coding and behavioral questions."""
 from __future__ import annotations
 
 import json
@@ -45,8 +45,7 @@ def _items(v) -> list[dict]:
 
 
 def clean_pack(pack) -> dict:
-    """Normalise the model's interview pack to exactly the shape the app renders, dropping broken entries,
-    so an odd answer from any model can't break the interview screen."""
+    """Coerce the pack into the shape the app expects and drop broken entries."""
     pack = pack if isinstance(pack, dict) else {}
     ov = pack.get("overview") if isinstance(pack.get("overview"), dict) else {}
     mcq = []

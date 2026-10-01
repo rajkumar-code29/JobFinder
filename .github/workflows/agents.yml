@@ -1,8 +1,8 @@
 name: Job agents (hourly)
 
 on:
-  # The punctual hourly trigger is the Cloudflare Worker in scheduler/ (GitHub's cron is often hours late).
-  # This cron is only a backup; the pipeline skips a scheduled run if one already ran in the last 40 minutes.
+  # Hourly runs come from the Cloudflare worker in scheduler/ because GitHub's cron runs late a lot.
+  # This is just a backup; the pipeline skips it if a scheduled run already happened.
   schedule:
     - cron: "37 */3 * * *"
   workflow_dispatch:
@@ -16,7 +16,7 @@ on:
         description: "Reprocess one job id (optional, e.g. JF-20260927-ABCDE)"
         required: false
       compare:
-        description: "Model comparison id (started from the app: Models → Compare)"
+        description: "Model comparison id (started from the app)"
         required: false
       all_sources:
         description: "Ignore per-source throttles"
@@ -30,7 +30,7 @@ concurrency:
 jobs:
   run:
     runs-on: ubuntu-latest
-    timeout-minutes: 40   # hard stop; the circuit breaker normally ends Gemini trouble much sooner
+    timeout-minutes: 40
     defaults:
       run:
         working-directory: agents
@@ -48,7 +48,7 @@ jobs:
         env:
           SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
           SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
-          # Shared (owner) keys. Single-key secrets and comma-separated fallback lists both work.
+          # owner's keys (single or comma-separated lists)
           GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
           GEMINI_API_KEYS: ${{ secrets.GEMINI_API_KEYS }}
           ADZUNA_APP_ID: ${{ secrets.ADZUNA_APP_ID }}

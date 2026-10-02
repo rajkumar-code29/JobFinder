@@ -51,7 +51,7 @@ class _UsersScreenState extends State<UsersScreen> {
         context: context,
         builder: (ctx) => AlertDialog(
           title: Text(accessStatus(u) == 'approved' ? 'Remove access?' : 'Reject this registration?'),
-          content: Text('${_name(u)} (${u['email']}) won\'t be able to use JobFinder and their agents stop. '
+          content: Text('${_name(u)} (${u['email']}) won\'t be able to use Pounce and their agents stop. '
               'You can approve them again later.'),
           actions: [
             TextButton(onPressed: () => Navigator.pop(ctx, false), child: const Text('Cancel')),

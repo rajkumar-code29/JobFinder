@@ -1,6 +1,8 @@
 import 'package:flutter/material.dart';
 import 'package:go_router/go_router.dart';
 
+import 'common.dart';
+
 /// Bottom nav on phones, rail on wide screens.
 class AppShell extends StatelessWidget {
   const AppShell({super.key, required this.location, required this.child});
@@ -34,7 +36,7 @@ class AppShell extends StatelessWidget {
             labelType: NavigationRailLabelType.all,
             leading: Padding(
               padding: const EdgeInsets.symmetric(vertical: 12),
-              child: Icon(Icons.travel_explore, size: 32, color: Theme.of(context).colorScheme.primary),
+              child: const AppLogo(size: 36),
             ),
             destinations: [
               for (final t in _tabs)

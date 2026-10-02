@@ -45,7 +45,7 @@ batch takes several hours.
 | *Agents paused by an admin* | Everything is paused until the admin resumes. |
 
 ## Your data
-Only you see your jobs and documents in the app; the admin who runs JobFinder owns the database. Your resume and job
+Only you see your jobs and documents in the app; the admin who runs Pounce owns the database. Your resume and job
 descriptions are sent to the AI provider of your key. Delete jobs any time; jobs never marked **Applied** are deleted
 automatically after **30 days**, and deleted jobs don't come back.
 
@@ -62,7 +62,7 @@ class HelpScreen extends StatelessWidget {
   Widget build(BuildContext context) => Scaffold(
         appBar: AppBar(
           leading: BackButton(onPressed: () => context.canPop() ? context.pop() : context.go('/')),
-          title: const Text('How JobFinder works'),
+          title: const Text('How Pounce works'),
         ),
         body: ListView(padding: const EdgeInsets.all(16), children: [
           PageBody(

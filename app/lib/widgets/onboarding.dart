@@ -115,9 +115,9 @@ class PrivacyNoticeDialog extends StatelessWidget {
         title: const Text('Before you start: your data'),
         content: const SingleChildScrollView(
           child: Text(
-            'What JobFinder stores: your resume and cover letter, your settings and API keys, the jobs it finds '
+            'What Pounce stores: your resume and cover letter, your settings and API keys, the jobs it finds '
             'and what it writes for them (tailored resumes, cover letters, interview prep).\n\n'
-            'Who can see it: in the app, only you. The person who runs this JobFinder (the admin) owns the database '
+            'Who can see it: in the app, only you. The person who runs Pounce (the admin) owns the database '
             'and can technically access everything stored in it. API keys can\'t be read back in the app.\n\n'
             'AI providers: to tailor your resume and prepare you, your resume and the job descriptions are sent to '
             'the AI provider of your key (e.g. Google Gemini, Groq). Free tiers may use this data to improve their '

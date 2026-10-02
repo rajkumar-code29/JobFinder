@@ -15,6 +15,18 @@ class PageBody extends StatelessWidget {
       );
 }
 
+/// The app icon, rounded like on a home screen.
+class AppLogo extends StatelessWidget {
+  const AppLogo({super.key, this.size = 48});
+  final double size;
+
+  @override
+  Widget build(BuildContext context) => ClipRRect(
+        borderRadius: BorderRadius.circular(size * 0.224),
+        child: Image.asset('assets/icon/logo.png', width: size, height: size, filterQuality: FilterQuality.medium),
+      );
+}
+
 String ago(DateTime t) {
   final d = DateTime.now().difference(t);
   if (d.inSeconds < 60) return 'just now';

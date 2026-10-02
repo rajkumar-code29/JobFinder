@@ -75,7 +75,7 @@ class _SetPasswordScreenState extends State<SetPasswordScreen> {
                   const SizedBox(height: 12),
                   Text('Choose your password', textAlign: TextAlign.center, style: theme.textTheme.headlineSmall),
                   const SizedBox(height: 4),
-                  Text('You\'ll use it with $email to sign in to JobFinder on the web and on your phone.',
+                  Text('You\'ll use it with $email to sign in to Pounce on the web and on your phone.',
                       textAlign: TextAlign.center, style: theme.textTheme.bodyMedium),
                   const SizedBox(height: 28),
                 ] else ...[

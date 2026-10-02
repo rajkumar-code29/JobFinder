@@ -20,7 +20,7 @@ OPENAI_COMPATIBLE = {
         "max_request_tokens": None,
         "tokens_per_minute": None,
         "min_interval": 3.1,  # 20 rpm on free models
-        "headers": {"HTTP-Referer": "https://jobs.rajkumar.codes", "X-Title": "JobFinder"},
+        "headers": {"HTTP-Referer": "https://jobs.rajkumar.codes", "X-Title": "Pounce"},
     },
 }
 

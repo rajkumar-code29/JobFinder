@@ -1,4 +1,6 @@
-# JobFinder
+# Pounce
+
+(The repo and code still use the old name, JobFinder.)
 
 I got tired of scrolling job boards and rewriting my resume for every application, so I built this. A set of
 agents runs every hour, finds jobs that actually match my resume, tailors a copy of my resume for each one,

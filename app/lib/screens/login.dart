@@ -4,6 +4,7 @@ import 'package:go_router/go_router.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 
 import '../auth_links.dart';
+import '../widgets/common.dart';
 
 class LoginScreen extends StatefulWidget {
   const LoginScreen({super.key});
@@ -73,9 +74,9 @@ class _LoginScreenState extends State<LoginScreen> {
             constraints: const BoxConstraints(maxWidth: 380),
             child: AutofillGroup(
               child: Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
-                Icon(Icons.travel_explore, size: 56, color: theme.colorScheme.primary),
+                const Center(child: AppLogo(size: 72)),
                 const SizedBox(height: 12),
-                Text('JobFinder', textAlign: TextAlign.center, style: theme.textTheme.headlineMedium),
+                Text('Pounce', textAlign: TextAlign.center, style: theme.textTheme.headlineMedium),
                 Text('Your job-hunting agents', textAlign: TextAlign.center, style: theme.textTheme.bodyMedium),
                 const SizedBox(height: 32),
                 TextField(

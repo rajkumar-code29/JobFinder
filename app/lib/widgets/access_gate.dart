@@ -91,7 +91,7 @@ class WaitingForApproval extends StatelessWidget {
               Text(
                 rejected
                     ? 'If you think this is a mistake, email ${AppConfig.supportEmail} from $email.'
-                    : 'An admin reviews every new account. This screen opens JobFinder by itself as soon as '
+                    : 'An admin reviews every new account. This screen opens Pounce by itself as soon as '
                         'you\'re approved, so you can leave it open or come back later.',
                 textAlign: TextAlign.center,
               ),

@@ -51,7 +51,7 @@ class _RegisterScreenState extends State<RegisterScreen> {
                     Text('Check your inbox', textAlign: TextAlign.center, style: theme.textTheme.headlineSmall),
                     const SizedBox(height: 8),
                     Text('We sent a confirmation link to $_confirmEmail. Open it, then sign in. '
-                        'An admin approves new accounts, and you can use JobFinder once you\'re approved.',
+                        'An admin approves new accounts, and you can use Pounce once you\'re approved.',
                         textAlign: TextAlign.center),
                     const SizedBox(height: 24),
                     FilledButton(onPressed: () => context.go('/login'), child: const Text('Back to sign in')),

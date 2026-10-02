@@ -1,5 +1,6 @@
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
+import 'package:go_router/go_router.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 
 import '../auth_links.dart';
@@ -109,6 +110,12 @@ class _LoginScreenState extends State<LoginScreen> {
                 ),
                 const SizedBox(height: 8),
                 TextButton(onPressed: _busy ? null : _forgotPassword, child: const Text('Forgot password?')),
+                const Divider(height: 32),
+                OutlinedButton(
+                  onPressed: _busy ? null : () => context.go('/register'),
+                  style: OutlinedButton.styleFrom(minimumSize: const Size.fromHeight(44)),
+                  child: const Text('New here? Create an account'),
+                ),
               ]),
             ),
           ),

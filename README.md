@@ -43,10 +43,13 @@ Nothing gets scraped. For LinkedIn, Indeed and similar sites only the domain is 
 It takes about half an hour the first time.
 
 **Supabase**
-1. Create a free project and run the files in `supabase/migrations/` in order (001 to 007) in the SQL editor.
+1. Create a free project and run the files in `supabase/migrations/` in order (001 to 008) in the SQL editor.
    Create your own user first (Authentication > Users > Add user, tick Auto Confirm) because 002 makes the
    oldest user the owner.
-2. Turn off "Allow new users to sign up" under Authentication > Sign In / Providers.
+2. Turn on "Allow new users to sign up" under Authentication > Sign In / Providers. New accounts can't do
+   anything until an admin approves them in the app. Keep "Confirm email" on so people prove they own the
+   address, and set up custom SMTP (Resend or Brevo, both free) because the built-in one only sends a few
+   emails an hour.
 3. Authentication > URL Configuration: set the Site URL to the web app's address and add `https://<site>/**`
    under Redirect URLs. Without this, invite and reset emails open localhost:3000.
 4. Grab the project URL, the publishable key and the secret key from the API settings.
@@ -91,7 +94,9 @@ because iCloud offloads files and breaks code signing. To ship a TestFlight buil
 
 ## Other users
 
-Friends can use it too. Add them in Supabase (Authentication > Users). They get their own settings and only
+Friends can use it too. They register from the sign-in page (name, email, phone and whether they want the
+mobile app) and wait until I approve them in Settings > Users, which I can do from my phone. Home shows how
+many people are waiting. Until then the database gives them nothing. They get their own settings and only
 ever see their own jobs, which row-level security enforces. They use their own API keys unless I switch on
 shared keys for them in Settings > Users. That screen also shows whether each person is set up, their last
 run and how much storage they use.

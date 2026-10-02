@@ -1,11 +1,12 @@
 import 'dart:convert';
-import 'dart:typed_data';
 
+import 'package:flutter/foundation.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 import 'package:url_launcher/url_launcher.dart';
 
 import 'config.dart';
 import 'models.dart';
+import 'registration.dart';
 
 SupabaseClient get supa => Supabase.instance.client;
 
@@ -163,6 +164,25 @@ class Api {
     );
   }
 
+  // registration and approval
+  static Future<AuthResponse> register(Registration r) => supa.auth.signUp(
+        email: r.email,
+        password: r.password,
+        data: r.metadata,
+        // null on iOS -> Supabase uses the site URL
+        emailRedirectTo: kIsWeb ? Uri.base.origin : null,
+      );
+
+  /// Own account row (status is watched by the access gate).
+  static Stream<List<Map<String, dynamic>>> myAccountStream() =>
+      supa.from('accounts').stream(primaryKey: ['user_id']).eq('user_id', uid);
+
+  /// Admins get every account, everyone else only their own.
+  static Stream<List<Map<String, dynamic>>> accountsStream() => supa.from('accounts').stream(primaryKey: ['user_id']);
+
+  static Future<void> adminSetStatus(String userId, String status) =>
+      supa.rpc('admin_set_status', params: {'p_user': userId, 'p_status': status});
+
   // admin: users
   static Future<List<Map<String, dynamic>>> adminUsers() async =>
       List<Map<String, dynamic>>.from(await supa.rpc('admin_users') as List);
@@ -262,6 +282,8 @@ class Api {
   static Future<void> deleteApiKey(String id) => supa.from('api_keys').delete().eq('id', id);
 
   // admin
+  static String? get currentEmail => supa.auth.currentUser?.email;
+
   static bool get isAdmin =>
       (supa.auth.currentUser?.email ?? '').toLowerCase().endsWith('@${AppConfig.adminEmailDomain}');
 

@@ -25,7 +25,13 @@ def now_iso() -> str:
 
 # users
 def active_accounts() -> list[dict]:
-    return sb.table("accounts").select("*").eq("enabled", True).order("created_at").execute().data
+    """Enabled and approved by an admin."""
+    try:
+        return (sb.table("accounts").select("*").eq("enabled", True).eq("status", "approved")
+                .order("created_at").execute().data)
+    except Exception as exc:  # no status column before migration 008
+        log.warning("accounts.status unavailable (%s); using enabled accounts", exc)
+        return sb.table("accounts").select("*").eq("enabled", True).order("created_at").execute().data
 
 
 def user_api_keys(user_id: str) -> list[dict]:

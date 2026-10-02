@@ -15,9 +15,11 @@ import 'screens/job_detail.dart';
 import 'screens/jobs.dart';
 import 'screens/login.dart';
 import 'screens/models.dart';
+import 'screens/register.dart';
 import 'screens/set_password.dart';
 import 'screens/settings.dart';
 import 'screens/users.dart';
+import 'widgets/access_gate.dart';
 import 'widgets/shell.dart';
 
 Future<void> main() async {
@@ -64,17 +66,20 @@ class JobFinderApp extends StatelessWidget {
     redirect: (context, state) {
       final signedIn = Supabase.instance.client.auth.currentSession != null;
       final loc = state.matchedLocation;
-      if (!signedIn) return loc == '/login' ? null : '/login';
+      const public = {'/login', '/register'};
+      if (!signedIn) return public.contains(loc) ? null : '/login';
       // came in from an invite/reset link
       if (AuthLinks.needsPassword.value && loc != '/set-password') return '/set-password';
-      if (loc == '/login') return '/';
+      if (public.contains(loc)) return '/';
       return null;
     },
     routes: [
       GoRoute(path: '/login', builder: (_, _) => const LoginScreen()),
+      GoRoute(path: '/register', builder: (_, _) => const RegisterScreen()),
       GoRoute(path: '/set-password', builder: (_, _) => const SetPasswordScreen()),
       ShellRoute(
-        builder: (context, state, child) => AppShell(location: state.matchedLocation, child: child),
+        // nothing inside the shell until an admin has approved the account
+        builder: (context, state, child) => AccessGate(child: AppShell(location: state.matchedLocation, child: child)),
         routes: [
           GoRoute(path: '/', builder: (_, _) => const HomeScreen()),
           GoRoute(

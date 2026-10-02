@@ -70,6 +70,7 @@ class _HomeScreenState extends State<HomeScreen> {
         child: ListView(padding: const EdgeInsets.all(16), children: [
           PageBody(
             child: Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
+              if (Api.isAdmin) const _PendingApprovalsCard(),
               const GettingStartedCard(),
               const AgentControlCard(),
               const _CurrentBatchCard(),
@@ -222,6 +223,41 @@ class AgentControlCard extends StatelessWidget {
                             label: const Text('Pause all'),
                           ))
                     : null,
+              ),
+            ),
+          );
+        },
+      );
+}
+
+/// Admin: people who registered and are waiting for approval (live).
+class _PendingApprovalsCard extends StatefulWidget {
+  const _PendingApprovalsCard();
+
+  @override
+  State<_PendingApprovalsCard> createState() => _PendingApprovalsCardState();
+}
+
+class _PendingApprovalsCardState extends State<_PendingApprovalsCard> {
+  late final Stream<List<Map<String, dynamic>>> _stream = Api.accountsStream();
+
+  @override
+  Widget build(BuildContext context) => StreamBuilder<List<Map<String, dynamic>>>(
+        stream: _stream,
+        builder: (context, snap) {
+          final pending = (snap.data ?? []).where((a) => a['status'] == 'pending').toList();
+          if (pending.isEmpty) return const SizedBox.shrink();
+          final names = pending.map((a) => a['first_name'] as String?).whereType<String>().take(3).join(', ');
+          return Padding(
+            padding: const EdgeInsets.only(bottom: 16),
+            child: Card(
+              color: Theme.of(context).colorScheme.primaryContainer.withValues(alpha: 0.5),
+              child: ListTile(
+                leading: Badge(label: Text('${pending.length}'), child: const Icon(Icons.person_add_alt_1, size: 30)),
+                title: Text(pending.length == 1 ? '1 person is waiting for approval' : '${pending.length} people are waiting for approval'),
+                subtitle: names.isEmpty ? null : Text(names),
+                trailing: const Icon(Icons.chevron_right),
+                onTap: () => context.push('/admin/users'),
               ),
             ),
           );

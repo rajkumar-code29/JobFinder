@@ -102,7 +102,9 @@ flutter:
 # App icon for iOS + web (regenerate with: dart run flutter_launcher_icons)
 flutter_launcher_icons:
   image_path: "assets/icon/app_icon.png"
-  android: false
+  android: true
+  adaptive_icon_background: "assets/icon/android_background.png"
+  adaptive_icon_foreground: "assets/icon/android_foreground.png"
   ios: true
   remove_alpha_ios: true
   web:

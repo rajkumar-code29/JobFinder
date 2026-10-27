@@ -94,6 +94,13 @@ flutter build ios --release --dart-define-from-file=env.json
 Then install with Xcode or `xcrun devicectl device install app`. Keep the repo outside iCloud-synced folders,
 because iCloud offloads files and breaks code signing. To ship a TestFlight build: `cd app && ./tool/testflight.sh`.
 
+**Android**
+GitHub Actions builds a signed APK on every push that touches the app and puts it on the `android` release:
+https://github.com/rajkumar-code29/JobFinder/releases/download/android/pounce.apk
+People open that link on their phone, download it and allow installs from the browser when asked. To update they
+install the new APK over the old one. The build needs two secrets, `ANDROID_KEYSTORE_BASE64` and
+`ANDROID_KEYSTORE_PASSWORD`. Keep a backup of the upload key: without it, existing installs can't be updated.
+
 ## Other users
 
 Friends can use it too. They register from the sign-in page (name, email, phone and whether they want the

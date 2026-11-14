@@ -133,10 +133,11 @@ def record_seen(user_id: str, context: str, rows: list[dict]) -> None:
 
 def cleanup_old_jobs(user_id: str, days: int) -> int:
     """Remove unapplied jobs older than `days` (files first) and mark them as deleted.
-    Skips jobs in a batch that's still open."""
+    Skips jobs in a batch that's still open, and custom jobs (the user added those on purpose)."""
     cutoff = (datetime.now(timezone.utc) - timedelta(days=days)).isoformat()
     rows = (sb.table("jobs").select("id,job_id,source,external_id,company,title,batch_id")
-            .eq("user_id", user_id).neq("status", "applied").lt("created_at", cutoff).limit(200).execute().data)
+            .eq("user_id", user_id).neq("status", "applied").neq("source", "custom").lt("created_at", cutoff)
+            .limit(200).execute().data)
     if not rows:
         return 0
     open_batches = {b["id"] for b in sb.table("batches").select("id").eq("user_id", user_id)
@@ -175,6 +176,13 @@ def insert_job(row: dict) -> dict:
 
 def update_job(job_id: str, values: dict) -> None:
     sb.table("jobs").update(values).eq("job_id", job_id).execute()
+
+
+def custom_jobs(user_id: str) -> list[dict]:
+    """Jobs added on the Custom page that still need work, lowest batch number first."""
+    return (sb.table("jobs").select("*").eq("user_id", user_id).eq("source", "custom")
+            .in_("status", ["new", "scored", "tailored"]).lt("attempts", config.MAX_ATTEMPTS)
+            .order("custom_batch").order("created_at").execute().data)
 
 
 def queued_jobs(user_id: str, limit: int) -> list[dict]:
@@ -314,13 +322,21 @@ def scheduled_run_since(minutes: int) -> bool:
 
 
 def expire_stale_agent_runs() -> None:
-    """Only one run at a time (workflow concurrency group), so anything still 'running' is left over."""
-    sb.table("agent_runs").update(
+    """Regular runs share one concurrency group, so anything still 'running' is left over. Custom runs have
+    their own group and may be going right now, so those are left alone unless they're past the job timeout."""
+    since = (datetime.now(timezone.utc) - timedelta(minutes=45)).isoformat()
+    live = [r["id"] for r in sb.table("pipeline_runs").select("id").eq("status", "running").eq("trigger", "custom")
+            .gte("started_at", since).execute().data]
+    agents = sb.table("agent_runs").update(
         {"status": "error", "message": "stopped (the run ended unexpectedly)", "finished_at": now_iso()}
-    ).eq("status", "running").execute()
-    sb.table("pipeline_runs").update(
-        {"status": "error", "finished_at": now_iso()}
-    ).eq("status", "running").execute()
+    ).eq("status", "running")
+    runs = sb.table("pipeline_runs").update({"status": "error", "finished_at": now_iso()}).eq("status", "running")
+    if live:
+        ids = ",".join(live)
+        agents = agents.or_(f"pipeline_run.is.null,pipeline_run.not.in.({ids})")
+        runs = runs.not_.in_("id", live)
+    agents.execute()
+    runs.execute()
 
 
 # batches
@@ -333,7 +349,7 @@ def open_batch(user_id: str) -> dict | None:
 def unbatched_jobs(user_id: str, limit: int) -> list[dict]:
     """Jobs not in a batch yet, best match first."""
     return (sb.table("jobs").select("id,job_id,relevance").eq("user_id", user_id).eq("status", "new")
-            .is_("batch_id", "null").lt("attempts", config.MAX_ATTEMPTS)
+            .neq("source", "custom").is_("batch_id", "null").lt("attempts", config.MAX_ATTEMPTS)
             .order("relevance", desc=True).order("created_at").limit(limit).execute().data)
 
 

@@ -49,6 +49,13 @@ class Job {
   Map<String, String> get models => ((raw['meta'] as Map?)?['models'] as Map? ?? {})
       .map((k, v) => MapEntry(k.toString(), v.toString()));
   int? get batchRank => raw['batch_rank'] as int?;
+
+  /// Added by hand on the Custom page.
+  bool get isCustom => source == 'custom';
+  int? get customBatch => raw['custom_batch'] as int?;
+
+  /// Where its pages live in the app.
+  String get basePath => isCustom ? '/custom' : '/jobs';
 }
 
 class Batch {

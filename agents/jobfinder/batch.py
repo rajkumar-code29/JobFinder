@@ -21,7 +21,7 @@ def _check() -> None:
         raise llm.Paused("Agents paused by an admin")
 
 
-def _failed(run: db.PipelineRun, job: dict, exc: Exception) -> None:
+def mark_failed(run: db.PipelineRun, job: dict, exc: Exception) -> None:
     attempts = int(job.get("attempts") or 0) + 1
     values = {"attempts": attempts, "error": str(exc)[:2000]}
     if attempts >= config.MAX_ATTEMPTS:
@@ -81,7 +81,7 @@ def process(run: db.PipelineRun, batch: dict, profile: dict, brief: str, setting
             except llm.StopUser:
                 raise
             except Exception as exc:
-                _failed(run, job, exc)
+                mark_failed(run, job, exc)
     if any(j["status"] == "new" for j in active()):
         run.note(f"{label}: some jobs still need scoring - continuing next run")
         return
@@ -116,7 +116,7 @@ def process(run: db.PipelineRun, batch: dict, profile: dict, brief: str, setting
         except llm.StopUser:
             raise
         except Exception as exc:
-            _failed(run, job, exc)
+            mark_failed(run, job, exc)
         run.save()
 
     remaining = len(active())

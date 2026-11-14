@@ -46,8 +46,9 @@ Map<String, dynamic> normalizePack(Map<String, dynamic> pack) {
 }
 
 class InterviewScreen extends StatefulWidget {
-  const InterviewScreen({super.key, required this.jobId});
+  const InterviewScreen({super.key, required this.jobId, this.basePath = '/jobs'});
   final String jobId;
+  final String basePath;
 
   @override
   State<InterviewScreen> createState() => _InterviewScreenState();
@@ -70,7 +71,7 @@ class _InterviewScreenState extends State<InterviewScreen> {
       future: _future,
       builder: (context, snap) {
         final back = BackButton(
-            onPressed: () => context.canPop() ? context.pop() : context.go('/jobs/${widget.jobId}'));
+            onPressed: () => context.canPop() ? context.pop() : context.go('${widget.basePath}/${widget.jobId}'));
         if (snap.hasError) {
           return Scaffold(
             appBar: AppBar(leading: back, title: const Text('Interview prep')),

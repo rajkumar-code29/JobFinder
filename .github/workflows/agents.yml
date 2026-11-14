@@ -18,13 +18,17 @@ on:
       compare:
         description: "Model comparison id (started from the app)"
         required: false
+      custom:
+        description: "User id: process only that user's Custom page jobs (started from the app)"
+        required: false
       all_sources:
         description: "Ignore per-source throttles"
         type: boolean
         default: true
 
+# Custom page runs get a group per user so they don't wait behind (or get cancelled by) the hourly run.
 concurrency:
-  group: job-agents
+  group: ${{ inputs.custom && format('custom-{0}', inputs.custom) || 'job-agents' }}
   cancel-in-progress: false
 
 jobs:
@@ -60,9 +64,11 @@ jobs:
           OPENROUTER_API_KEY: ${{ secrets.OPENROUTER_API_KEY }}
           GEMINI_MODEL: ${{ vars.GEMINI_MODEL }}
           GEMINI_FAST_MODEL: ${{ vars.GEMINI_FAST_MODEL }}
+          CUSTOM_USER: ${{ inputs.custom }}
         run: |
           ARGS="--trigger ${{ inputs.trigger || (github.event_name == 'workflow_dispatch' && 'manual' || 'schedule') }}"
           if [ -n "${{ inputs.job }}" ]; then ARGS="$ARGS --job ${{ inputs.job }}"; fi
           if [ -n "${{ inputs.compare }}" ]; then ARGS="$ARGS --compare ${{ inputs.compare }}"; fi
           if [ "${{ inputs.all_sources }}" = "true" ]; then ARGS="$ARGS --all-sources"; fi
+          if [ -n "$CUSTOM_USER" ]; then ARGS="$ARGS --custom $CUSTOM_USER"; fi
           python -m jobfinder.pipeline $ARGS

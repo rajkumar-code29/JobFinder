@@ -71,7 +71,7 @@ class _JobsScreenState extends State<JobsScreen> {
           builder: (context, snap) {
             if (snap.hasError) return ErrorView(snap.error!);
             if (!snap.hasData) return const Center(child: CircularProgressIndicator());
-            final all = snap.data!;
+            final all = snap.data!.where((j) => !j.isCustom).toList(); // those live on the Custom page
             final batches = [...(batchSnap.data ?? <Batch>[])]..sort((a, b) => b.number.compareTo(a.number));
             final visible = all.where(_match).toList();
 
@@ -279,7 +279,7 @@ class JobCard extends StatelessWidget {
     return Card(
       clipBehavior: Clip.antiAlias,
       child: InkWell(
-        onTap: () => context.go('/jobs/${job.jobId}'),
+        onTap: () => context.go('${job.basePath}/${job.jobId}'),
         child: Padding(
           padding: const EdgeInsets.fromLTRB(14, 12, 6, 6),
           child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
@@ -316,7 +316,7 @@ class JobCard extends StatelessWidget {
                   style: theme.textTheme.titleMedium?.copyWith(fontWeight: FontWeight.w600)),
             ),
             const SizedBox(height: 2),
-            Text('${job.company} · ${job.location}',
+            Text(job.isCustom ? (isNa(job.company) ? 'Added by hand' : job.company) : '${job.company} · ${job.location}',
                 maxLines: 1, overflow: TextOverflow.ellipsis, style: theme.textTheme.bodySmall),
             const Spacer(),
             Padding(
@@ -333,12 +333,14 @@ class JobCard extends StatelessWidget {
                       ),
                     ]),
                     const SizedBox(height: 2),
-                    Text('${job.source} · ${ago(job.createdAt)}', style: theme.textTheme.labelSmall),
+                    Text('${job.isCustom ? 'added' : job.source} · ${ago(job.createdAt)}', style: theme.textTheme.labelSmall),
                   ]),
                 ),
                 ScoreBadge(label: 'ATS', score: job.tailoredAts ?? job.atsScore),
                 const SizedBox(width: 6),
-                ScoreBadge(label: 'Match', score: job.relevance),
+                job.isCustom
+                    ? ScoreBadge(label: 'Odds', score: job.shortlist)
+                    : ScoreBadge(label: 'Match', score: job.relevance),
               ]),
             ),
             const Divider(height: 12),

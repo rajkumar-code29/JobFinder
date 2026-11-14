@@ -28,6 +28,11 @@ open the application page, mark it applied, or delete it.
 
 A new batch only starts once the current one is done. On free tiers that's a few jobs an hour.
 
+**Custom jobs.** When I find a job myself, I paste the title and description on the Custom page (company, link and
+a batch number are optional) and press Process now. That starts a run just for those jobs, with the same scoring,
+tailored resume, cover letter and interview prep. They stay on that page, never join the hourly batches and aren't
+cleaned up after 30 days. A resume builder page is next; for now it just says coming soon.
+
 ## Job sources
 
 | Source | Notes |
@@ -45,7 +50,7 @@ Nothing gets scraped. For LinkedIn, Indeed and similar sites only the domain is 
 It takes about half an hour the first time.
 
 **Supabase**
-1. Create a free project and run the files in `supabase/migrations/` in order (001 to 008) in the SQL editor.
+1. Create a free project and run the files in `supabase/migrations/` in order (001 to 009) in the SQL editor.
    Create your own user first (Authentication > Users > Add user, tick Auto Confirm) because 002 makes the
    oldest user the owner.
 2. Turn on "Allow new users to sign up" under Authentication > Sign In / Providers. New accounts can't do
@@ -146,6 +151,7 @@ cp .env.example .env
 .venv/bin/python -m jobfinder.pipeline --trigger manual --all-sources
 .venv/bin/python -m jobfinder.pipeline --job JF-20260930-ABCDE   # redo one job
 .venv/bin/python -m jobfinder.pipeline --user me@example.com     # one user
+.venv/bin/python -m jobfinder.pipeline --custom <user id>        # that user's Custom page jobs
 
 cd app && flutter run -d chrome --dart-define-from-file=env.json
 ```

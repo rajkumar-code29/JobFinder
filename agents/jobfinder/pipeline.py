@@ -2,7 +2,10 @@
 flow in batch.py.
 
 python -m jobfinder.pipeline [--trigger manual] [--all-sources] [--skip-scout] [--user EMAIL] [--job JF-...]
-                             [--compare ID]
+                             [--compare ID] [--custom USER_ID]
+
+--custom processes only that user's jobs from the Custom page. It's started from the app and runs in its own
+concurrency group, so it can overlap an hourly run.
 """
 from __future__ import annotations
 
@@ -10,6 +13,7 @@ import argparse
 import json
 import logging
 import sys
+import uuid
 
 from . import batch, config, control, db, llm
 from .agents import coach, profile as profile_agent, salary, scorer, tailor, writer
@@ -21,7 +25,12 @@ log = logging.getLogger("jobfinder")
 def process(run: db.PipelineRun, job: dict, profile: dict, brief: str, settings: dict) -> None:
     jid = job["job_id"]
     if job["status"] == "new":
-        salary.run(run, job)
+        try:
+            salary.run(run, job)
+        except llm.StopUser:
+            raise
+        except Exception as exc:  # not worth failing the job over
+            log.warning("salary failed for %s: %s", jid, exc)
         report = scorer.run(run, job, profile)
     else:
         report = json.loads(db.download(job["files"]["report_json"]))
@@ -40,6 +49,25 @@ def process(run: db.PipelineRun, job: dict, profile: dict, brief: str, settings:
     run.note(f"{jid} ready: {job['title']} @ {job['company']} (ATS {job.get('ats_score')} -> {job.get('tailored_ats_score')})")
 
 
+def process_custom(run: db.PipelineRun, profile: dict, brief: str, settings: dict) -> None:
+    """Everything waiting on the Custom page, until the call budget runs out."""
+    jobs = db.custom_jobs(run.user_id)
+    if not jobs:
+        run.note("No custom jobs waiting")
+        return
+    run.note(f"{len(jobs)} custom job(s) to process")
+    for job in jobs:
+        if control.paused():
+            raise llm.Paused("Agents paused by an admin")
+        try:
+            process(run, job, profile, brief, settings)
+        except llm.StopUser:
+            raise
+        except Exception as exc:
+            batch.mark_failed(run, job, exc)
+        run.save()
+
+
 def run_user(account: dict, args, store: KeyStateStore, shared: dict, only_job: dict | None) -> bool:
     uid = account["user_id"]
     run = db.PipelineRun(args.trigger, uid)
@@ -53,12 +81,13 @@ def run_user(account: dict, args, store: KeyStateStore, shared: dict, only_job: 
             run.note("No AI provider key available (Gemini, Groq, ...): add one in Settings > API keys. Skipping this user.")
             return True
         settings = db.get_settings(uid)
-        try:
-            removed = db.cleanup_old_jobs(uid, config.JOB_RETENTION_DAYS)
-            if removed:
-                run.note(f"Cleaned up {removed} jobs older than {config.JOB_RETENTION_DAYS} days that were never applied to")
-        except Exception as exc:
-            log.warning("clean-up failed: %s", exc)
+        if not args.custom:  # leave the clean-up to the hourly run
+            try:
+                removed = db.cleanup_old_jobs(uid, config.JOB_RETENTION_DAYS)
+                if removed:
+                    run.note(f"Cleaned up {removed} jobs older than {config.JOB_RETENTION_DAYS} days that were never applied to")
+            except Exception as exc:
+                log.warning("clean-up failed: %s", exc)
         profile = profile_agent.run(run)
         if profile is None:
             run.note("No parent resume uploaded yet (Settings > Parent documents). Skipping this user.")
@@ -73,6 +102,8 @@ def run_user(account: dict, args, store: KeyStateStore, shared: dict, only_job: 
             except Exception as exc:
                 db.update_job(only_job["job_id"], {"error": str(exc)[:2000]})
                 raise
+        elif args.custom:
+            process_custom(run, profile, brief, settings)
         else:
             current = db.open_batch(uid)
             if current is None and not args.skip_scout:
@@ -109,6 +140,7 @@ def main(argv=None) -> int:
     ap.add_argument("--user", help="only run for this user (email)")
     ap.add_argument("--job", help="(re)process a single job id")
     ap.add_argument("--compare", type=int, help="run a model comparison (admin > Models > Compare)")
+    ap.add_argument("--custom", help="process this user's Custom page jobs (user id)")
     args = ap.parse_args(argv)
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
 
@@ -118,6 +150,8 @@ def main(argv=None) -> int:
     if args.compare:
         from . import compare
         return compare.run(args.compare)
+    if args.custom:
+        return run_custom(args)
     db.expire_stale_agent_runs()
     if args.trigger == "schedule" and not (args.job or args.user) and db.scheduled_run_since(minutes=40):
         # the Cloudflare cron and the GitHub backup cron can both fire
@@ -154,6 +188,23 @@ def main(argv=None) -> int:
             break
         ok = run_user(account, args, store, shared, only_job) and ok
     return 0 if ok else 1
+
+
+def run_custom(args) -> int:
+    try:
+        uid = str(uuid.UUID(args.custom))
+    except ValueError:
+        log.error("--custom needs a user id, got %r", args.custom)
+        return 1
+    account = next((a for a in db.active_accounts() if a["user_id"] == uid), None)
+    if account is None:
+        log.error("User %s isn't an active, approved account", uid)
+        return 1
+    args.trigger = "custom"
+    store = KeyStateStore()
+    shared = shared_keys(store)
+    llm.set_routing(db.model_routing())
+    return 0 if run_user(account, args, store, shared, None) else 1
 
 
 if __name__ == "__main__":

@@ -8,6 +8,7 @@ import 'package:supabase_flutter/supabase_flutter.dart';
 import 'auth_links.dart';
 import 'config.dart';
 import 'screens/agents.dart';
+import 'screens/custom.dart';
 import 'screens/help.dart';
 import 'screens/home.dart';
 import 'screens/interview.dart';
@@ -16,6 +17,7 @@ import 'screens/jobs.dart';
 import 'screens/login.dart';
 import 'screens/models.dart';
 import 'screens/register.dart';
+import 'screens/resume_builder.dart';
 import 'screens/set_password.dart';
 import 'screens/settings.dart';
 import 'screens/users.dart';
@@ -98,6 +100,24 @@ class JobFinderApp extends StatelessWidget {
               ),
             ],
           ),
+          GoRoute(
+            path: '/custom',
+            builder: (_, _) => const CustomJobsScreen(),
+            routes: [
+              GoRoute(
+                path: ':jobId',
+                builder: (_, state) => JobDetailScreen(jobId: state.pathParameters['jobId']!, basePath: '/custom'),
+                routes: [
+                  GoRoute(
+                    path: 'interview',
+                    builder: (_, state) =>
+                        InterviewScreen(jobId: state.pathParameters['jobId']!, basePath: '/custom'),
+                  ),
+                ],
+              ),
+            ],
+          ),
+          GoRoute(path: '/resume-builder', builder: (_, _) => const ResumeBuilderScreen()),
           GoRoute(path: '/agents', builder: (_, _) => const AgentsScreen()),
           GoRoute(
             path: '/models',

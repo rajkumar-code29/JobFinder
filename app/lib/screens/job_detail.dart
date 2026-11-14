@@ -10,8 +10,11 @@ import '../widgets/common.dart';
 import 'jobs.dart' show confirmDeleteJob;
 
 class JobDetailScreen extends StatefulWidget {
-  const JobDetailScreen({super.key, required this.jobId});
+  const JobDetailScreen({super.key, required this.jobId, this.basePath = '/jobs'});
   final String jobId;
+
+  /// '/jobs' or '/custom', for the back button and links.
+  final String basePath;
 
   @override
   State<JobDetailScreen> createState() => _JobDetailScreenState();
@@ -28,7 +31,7 @@ class _JobDetailScreenState extends State<JobDetailScreen> {
         final job = snap.data;
         return Scaffold(
           appBar: AppBar(
-            leading: BackButton(onPressed: () => context.canPop() ? context.pop() : context.go('/jobs')),
+            leading: BackButton(onPressed: () => context.canPop() ? context.pop() : context.go(widget.basePath)),
             title: Text(widget.jobId, style: const TextStyle(fontFamily: 'monospace')),
             actions: [
               if (job != null && !isNa(job.url))
@@ -42,7 +45,7 @@ class _JobDetailScreenState extends State<JobDetailScreen> {
                   tooltip: 'Delete job',
                   icon: const Icon(Icons.delete_outline),
                   onPressed: () async {
-                    if (await confirmDeleteJob(context, job) && context.mounted) context.go('/jobs');
+                    if (await confirmDeleteJob(context, job) && context.mounted) context.go(widget.basePath);
                   },
                 ),
             ],
@@ -77,7 +80,7 @@ class JobDetailBody extends StatelessWidget {
               Text('Rank #${job.batchRank} in its batch', style: theme.textTheme.bodySmall),
             ],
             const Spacer(),
-            Text('Found ${ago(job.createdAt)}', style: theme.textTheme.bodySmall),
+            Text('${job.isCustom ? 'Added' : 'Found'} ${ago(job.createdAt)}', style: theme.textTheme.bodySmall),
           ]),
           const SizedBox(height: 8),
           Text(job.title, style: theme.textTheme.headlineSmall?.copyWith(fontWeight: FontWeight.w700)),
@@ -85,7 +88,7 @@ class JobDetailBody extends StatelessWidget {
           Text(job.company, style: theme.textTheme.titleMedium?.copyWith(color: theme.colorScheme.primary)),
           const SizedBox(height: 16),
           Wrap(spacing: 10, runSpacing: 10, children: [
-            ScoreBadge(label: 'Resume match', score: job.relevance, big: true),
+            if (!job.isCustom) ScoreBadge(label: 'Resume match', score: job.relevance, big: true),
             ScoreBadge(label: 'ATS (parent)', score: job.atsScore, big: true),
             ScoreBadge(label: 'ATS (tailored)', score: job.tailoredAts, big: true),
             ScoreBadge(label: 'Shortlist odds', score: job.shortlist, big: true),
@@ -101,8 +104,11 @@ class JobDetailBody extends StatelessWidget {
                 _Info(Icons.home_work_outlined, 'Remote', job.remote),
                 _Info(Icons.badge_outlined, 'Type', job.employmentType),
                 _Info(Icons.event_outlined, 'Posted', job.postedAt),
-                _Info(Icons.hub_outlined, 'Source', job.source),
-                if (!isNa(job.relevanceReason)) _Info(Icons.psychology_outlined, 'Why it matches', job.relevanceReason),
+                if (job.isCustom)
+                  _Info(Icons.post_add_outlined, 'Source', 'Added by hand, batch ${job.customBatch ?? '-'}')
+                else
+                  _Info(Icons.hub_outlined, 'Source', job.source),
+                if (!job.isCustom && !isNa(job.relevanceReason)) _Info(Icons.psychology_outlined, 'Why it matches', job.relevanceReason),
                 if (job.appliedAt != null)
                   _Info(Icons.send, 'Applied', '${ago(job.appliedAt!)} with ${job.appliedWith ?? 'resume'}'),
               ]),
@@ -316,7 +322,7 @@ class _ActionBar extends StatelessWidget {
           child: Row(children: [
             Expanded(
               child: OutlinedButton.icon(
-                onPressed: hasInterview ? () => context.go('/jobs/${job.jobId}/interview') : null,
+                onPressed: hasInterview ? () => context.go('${job.basePath}/${job.jobId}/interview') : null,
                 icon: const Icon(Icons.school_outlined),
                 label: Text(hasInterview ? 'Prepare for interview' : 'Interview prep pending'),
                 style: OutlinedButton.styleFrom(minimumSize: const Size.fromHeight(48)),

@@ -29,6 +29,10 @@ batch takes several hours.
 - **Home** - totals, what's running now, the current batch.
 - **Jobs** - grouped by batch and sorted by rank. Tap a job for details, **Apply** (pick the tailored or your own
   resume) and **Prepare for interview**. Mark jobs **Applied**, or **Delete** them.
+- **Custom** - for jobs you found yourself. Paste the title and description (plus the company and link if you
+  have them), give it a batch number, and press **Process now**. You get the same scores, tailored resume, cover
+  letter and interview prep, but only when you ask, and these jobs never show up in your regular batches.
+- **Resume** - a resume builder. Coming soon.
 - **Agents** - every agent task and each run's log, including why something failed.
 - **Settings** - documents, API keys, where and what to search, and tuning.
 
@@ -47,7 +51,7 @@ batch takes several hours.
 ## Your data
 Only you see your jobs and documents in the app; the admin who runs Pounce owns the database. Your resume and job
 descriptions are sent to the AI provider of your key. Delete jobs any time; jobs never marked **Applied** are deleted
-automatically after **30 days**, and deleted jobs don't come back.
+automatically after **30 days** (except the ones on the Custom page), and deleted jobs don't come back.
 
 ## FAQ
 - **No jobs yet?** Check the Getting started card on Home, then Agents > Runs for the latest run's note.

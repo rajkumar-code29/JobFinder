@@ -67,6 +67,52 @@ class Api {
     await supa.rpc('delete_job', params: {'p_job_id': jobId});
   }
 
+  // custom jobs (title + JD entered by hand)
+  static Stream<List<Job>> customJobsStream() => supa
+      .from('jobs')
+      .stream(primaryKey: ['id'])
+      .eq('source', 'custom')
+      .order('created_at')
+      .limit(300)
+      .map((rows) => rows.map(Job.new).toList());
+
+  /// Returns the new job id.
+  static Future<String> addCustomJob({
+    required String title,
+    required String description,
+    String? company,
+    String? url,
+    int? batch,
+  }) async =>
+      await supa.rpc('add_custom_job', params: {
+        'p_title': title,
+        'p_description': description,
+        'p_company': company,
+        'p_url': url,
+        'p_batch': batch,
+      }) as String;
+
+  /// Starts a run for this user's custom jobs only.
+  static Future<int> requestCustomRun() async => (await supa.rpc('request_custom_run') as num).toInt();
+
+  static Future<(int?, String?)> customRunRequestStatus(int id) async {
+    final rows = await supa.rpc('custom_run_request_status', params: {'p_id': id}) as List;
+    if (rows.isEmpty) return (null, null);
+    final r = rows.first as Map<String, dynamic>;
+    return ((r['status_code'] as num?)?.toInt(), r['message'] as String?);
+  }
+
+  /// Puts a failed job back in the queue, keeping whatever the agents already made.
+  static Future<void> retryJob(Job job) => supa.from('jobs').update({
+        'attempts': 0,
+        'error': null,
+        'status': job.files.containsKey('resume_docx')
+            ? 'tailored'
+            : job.files.containsKey('report_json')
+                ? 'scored'
+                : 'new',
+      }).eq('job_id', job.jobId);
+
   // batches
   static Stream<List<Batch>> batchesStream() => supa
       .from('batches')

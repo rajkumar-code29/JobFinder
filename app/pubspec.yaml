@@ -43,6 +43,8 @@ dependencies:
   file_picker: ^13.1.0
   intl: ^0.20.3
   http: ^1.6.0
+  pdf: ^3.13.1
+  archive: ^4.7.1
 dev_dependencies:
   flutter_test:
     sdk: flutter
@@ -67,6 +69,17 @@ flutter:
   uses-material-design: true
   assets:
     - assets/icon/logo.png
+    - assets/fonts/
+
+  # Liberation Sans (SIL OFL, same metrics as Arial): resume builder PDFs and the on-screen preview
+  fonts:
+    - family: CvSans
+      fonts:
+        - asset: assets/fonts/LiberationSans-Regular.ttf
+        - asset: assets/fonts/LiberationSans-Bold.ttf
+          weight: 700
+        - asset: assets/fonts/LiberationSans-Italic.ttf
+          style: italic
 
   # To add assets to your application, add an assets section, like this:
   # assets:

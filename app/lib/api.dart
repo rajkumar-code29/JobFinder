@@ -10,6 +10,14 @@ import 'registration.dart';
 
 SupabaseClient get supa => Supabase.instance.client;
 
+class BuilderException implements Exception {
+  const BuilderException(this.message, this.code);
+  final String message;
+  final String? code;
+  @override
+  String toString() => message;
+}
+
 /// Rows and storage folders are keyed by this.
 String get uid => supa.auth.currentUser!.id;
 
@@ -112,6 +120,44 @@ class Api {
                 ? 'scored'
                 : 'new',
       }).eq('job_id', job.jobId);
+
+  // resume builder
+  static Stream<List<Map<String, dynamic>>> draftsStream() => supa
+      .from('resume_drafts')
+      .stream(primaryKey: ['id'])
+      .order('updated_at')
+      .limit(100);
+
+  static Future<Map<String, dynamic>?> draft(String id) =>
+      supa.from('resume_drafts').select().eq('id', id).maybeSingle();
+
+  static Future<String> createDraft(String kind, String title, Map<String, dynamic> data) async =>
+      (await supa.from('resume_drafts').insert({'kind': kind, 'title': title, 'data': data}).select('id').single())['id']
+          as String;
+
+  static Future<void> saveDraft(String id, String title, Map<String, dynamic> data) =>
+      supa.from('resume_drafts').update({'title': title, 'data': data}).eq('id', id);
+
+  static Future<void> deleteDraft(String id) => supa.from('resume_drafts').delete().eq('id', id);
+
+  /// Calls the resume-ai Edge Function. Throws [BuilderException] with a message that can be shown as is.
+  static Future<Map<String, dynamic>> resumeAi(Map<String, dynamic> body) async {
+    try {
+      final res = await supa.functions.invoke('resume-ai', body: body);
+      return Map<String, dynamic>.from(res.data as Map);
+    } on FunctionException catch (e) {
+      final details = e.details;
+      if (details is Map && details['error'] != null) {
+        throw BuilderException('${details['error']}', details['code'] as String?);
+      }
+      if (e.status == 404) {
+        throw const BuilderException('The resume builder isn\'t switched on yet (its server function is missing).', 'missing');
+      }
+      throw BuilderException('The AI request failed (${e.status}). Try again in a minute.', null);
+    }
+  }
+
+  static Future<bool> hasMasterResume() async => (await parentFiles('resume')).isNotEmpty;
 
   // batches
   static Stream<List<Batch>> batchesStream() => supa

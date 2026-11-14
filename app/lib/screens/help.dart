@@ -32,7 +32,10 @@ batch takes several hours.
 - **Custom** - for jobs you found yourself. Paste the title and description (plus the company and link if you
   have them), give it a batch number, and press **Process now**. You get the same scores, tailored resume, cover
   letter and interview prep, but only when you ask, and these jobs never show up in your regular batches.
-- **Resume** - a resume builder. Coming soon.
+- **Resume** - build a CV in UK careers-service style: answer questions and let the AI write it, use your own
+  words as typed, or start from your current resume. Review each section (regenerate, edit or keep your words), then
+  download Word or PDF and, if you like, make it your master resume. It also writes cover letters from your resume.
+  The builder's AI uses your own key and allows 60 requests a day.
 - **Agents** - every agent task and each run's log, including why something failed.
 - **Settings** - documents, API keys, where and what to search, and tuning.
 

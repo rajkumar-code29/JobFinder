@@ -17,6 +17,8 @@ const agentModelInfo = {
   'coach': ('Coach', 'Very long output (MCQ, technical, coding)', ['gemini:flash', 'gemini:flash-lite']),
   'writer': ('Writer', 'Natural writing, short output', ['gemini:flash', 'gemini:flash-lite']),
   'profile': ('Profile', 'Reads your resume once per upload', ['gemini:flash', 'gemini:flash-lite']),
+  // runs in the resume-ai Edge Function; keep in sync with DEFAULT_CHAIN in supabase/functions/resume-ai/llm.ts
+  'builder': ('Resume builder', 'CVs and cover letters on request; answers within a minute', ['gemini:flash-lite', 'gemini:flash']),
 };
 
 /// Editor suggestions (anything provider:model works).

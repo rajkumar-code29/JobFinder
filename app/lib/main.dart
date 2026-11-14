@@ -9,11 +9,13 @@ import 'auth_links.dart';
 import 'config.dart';
 import 'screens/agents.dart';
 import 'screens/custom.dart';
+import 'screens/cv_builder.dart';
 import 'screens/help.dart';
 import 'screens/home.dart';
 import 'screens/interview.dart';
 import 'screens/job_detail.dart';
 import 'screens/jobs.dart';
+import 'screens/letter_builder.dart';
 import 'screens/login.dart';
 import 'screens/models.dart';
 import 'screens/register.dart';
@@ -117,7 +119,14 @@ class JobFinderApp extends StatelessWidget {
               ),
             ],
           ),
-          GoRoute(path: '/resume-builder', builder: (_, _) => const ResumeBuilderScreen()),
+          GoRoute(
+            path: '/resume-builder',
+            builder: (_, _) => const ResumeBuilderScreen(),
+            routes: [
+              GoRoute(path: 'cv/:id', builder: (_, state) => CvBuilderScreen(draftId: state.pathParameters['id']!)),
+              GoRoute(path: 'letter/:id', builder: (_, state) => LetterBuilderScreen(draftId: state.pathParameters['id']!)),
+            ],
+          ),
           GoRoute(path: '/agents', builder: (_, _) => const AgentsScreen()),
           GoRoute(
             path: '/models',

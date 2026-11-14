@@ -31,7 +31,16 @@ A new batch only starts once the current one is done. On free tiers that's a few
 **Custom jobs.** When I find a job myself, I paste the title and description on the Custom page (company, link and
 a batch number are optional) and press Process now. That starts a run just for those jobs, with the same scoring,
 tailored resume, cover letter and interview prep. They stay on that page, never join the hourly batches and aren't
-cleaned up after 30 days. A resume builder page is next; for now it just says coming soon.
+cleaned up after 30 days.
+
+**Resume builder.** For friends who are students or don't have a decent CV yet. It follows UK university careers
+guidance: one column, standard headings, reverse chronological order, evidence instead of buzzwords, one or two full
+A4 pages. You pick what the CV is for (part-time job, internship, graduate job, professional role), which sets the
+format and section order, and then either answer questions and let the AI write it, use your own words as typed, or
+start from your current resume. Every section can be regenerated, edited or switched back to your own words before
+you download Word or PDF, and you can make the result your master resume. It also writes UK-style cover letters
+from your resume ("Yours sincerely" to a named person, "Yours faithfully" otherwise). The AI part runs in a Supabase
+Edge Function (`supabase/functions/resume-ai`) with your own keys, 60 requests a day; the files are made in the app.
 
 ## Job sources
 
@@ -50,7 +59,7 @@ Nothing gets scraped. For LinkedIn, Indeed and similar sites only the domain is 
 It takes about half an hour the first time.
 
 **Supabase**
-1. Create a free project and run the files in `supabase/migrations/` in order (001 to 009) in the SQL editor.
+1. Create a free project and run the files in `supabase/migrations/` in order (001 to 010) in the SQL editor.
    Create your own user first (Authentication > Users > Add user, tick Auto Confirm) because 002 makes the
    oldest user the owner.
 2. Turn on "Allow new users to sign up" under Authentication > Sign In / Providers. New accounts can't do
@@ -75,7 +84,8 @@ Free Gemini may use prompts to improve their models, and your resume is part of 
 Add these repository secrets: `SUPABASE_URL`, `SUPABASE_SERVICE_ROLE_KEY`, `SUPABASE_ANON_KEY`,
 `GEMINI_API_KEY` (or `GEMINI_API_KEYS=k1,k2`), `ADZUNA_APP_ID`, `ADZUNA_APP_KEY`, and optionally
 `RAPIDAPI_KEY` and `GROQ_API_KEY`. For the website and the scheduler also add `CLOUDFLARE_API_TOKEN`,
-`CLOUDFLARE_ACCOUNT_ID` and `GH_DISPATCH_TOKEN`.
+`CLOUDFLARE_ACCOUNT_ID` and `GH_DISPATCH_TOKEN`. The resume builder's Edge Function is deployed by the "Deploy
+Supabase functions" workflow, which needs `SUPABASE_ACCESS_TOKEN` (Supabase dashboard > Account > Access Tokens).
 
 The Cloudflare token needs Pages: Edit and Workers Scripts: Edit. `GH_DISPATCH_TOKEN` is a fine-grained token
 for this repo only, with Actions: Read and write.

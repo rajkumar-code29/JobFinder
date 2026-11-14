@@ -12,11 +12,21 @@ void main() {
     addTearDown(tester.view.reset);
   }
 
-  testWidgets('resume builder says coming soon on a phone', (tester) async {
+  testWidgets('resume builder home lists the ways to start and the drafts', (tester) async {
     await phone(tester);
-    await tester.pumpWidget(const MaterialApp(home: ResumeBuilderScreen()));
+    await tester.pumpWidget(MaterialApp(
+        home: ResumeBuilderScreen(
+            drafts: Stream.value([
+      {'id': 'a', 'kind': 'cv', 'title': 'Retail assistant CV', 'updated_at': '2026-11-14T10:00:00Z'},
+      {'id': 'b', 'kind': 'letter', 'title': 'Cover letter at Acme', 'updated_at': '2026-11-14T11:00:00Z'},
+    ]))));
+    await tester.pumpAndSettle();
     expect(find.text('Resume builder'), findsOneWidget);
-    expect(find.text('Coming soon'), findsOneWidget);
+    for (final t in ['Build with AI', 'My own words', 'Start from my resume', 'Start a cover letter']) {
+      expect(find.text(t), findsOneWidget);
+    }
+    await tester.scrollUntilVisible(find.text('Retail assistant CV'), 300, scrollable: find.byType(Scrollable).first);
+    expect(find.text('Cover letter at Acme'), findsOneWidget);
     expect(tester.takeException(), isNull);
   });
 

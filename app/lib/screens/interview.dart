@@ -46,7 +46,7 @@ Map<String, dynamic> normalizePack(Map<String, dynamic> pack) {
 }
 
 class InterviewScreen extends StatefulWidget {
-  const InterviewScreen({super.key, required this.jobId, this.basePath = '/jobs'});
+  const InterviewScreen({super.key, required this.jobId, this.basePath = '/matches'});
   final String jobId;
   final String basePath;
 

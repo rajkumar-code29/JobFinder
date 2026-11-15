@@ -69,15 +69,23 @@ class _GuideScreenState extends State<GuideScreen> {
         const _GuideStep(
           Icons.bolt_outlined,
           'Let the agents work',
-          'Every hour they search job sites and company boards, keep the jobs that fit your resume and score each one. '
-              'They appear under Jobs, best match first.',
-          actions: [('Open Jobs', '/jobs')],
+          'Every hour they search job sites and company boards, keep the jobs that fit your resume and score each one, '
+              'for free. Yours appear under Matches, best match first. Jobs shows everything the agents have found, '
+              'with search and filters like a job site.',
+          actions: [('Open Matches', '/matches'), ('Browse Jobs', '/jobs')],
+        ),
+        const _GuideStep(
+          Icons.toll_outlined,
+          'Credits',
+          'Open a match and pick what you want: a tailored resume and cover letter, or interview prep, 1 credit each. '
+              'Credits are only used when it works. Invite friends with your code and you both get 30 credits.',
+          actions: [('Credits and invites', '/credits')],
         ),
         const _GuideStep(
           Icons.send_outlined,
           'Apply',
-          'Open a job to see how well you match, the tailored resume and cover letter, and interview prep. Tap Apply to '
-              'open the application page, then mark it applied so you can keep track.',
+          'Tap Apply on a job to pick which resume to send and open the application page, then mark it applied so you '
+              'can keep track.',
         ),
         const _GuideStep(
           Icons.add_circle_outline,

@@ -12,15 +12,26 @@ Gemini for the AI work, and Cloudflare for the website and the hourly trigger.
 
 ## What it does
 
+Finding and scoring jobs is free for everyone. The paid part is per job and on request: a tailored resume and cover
+letter (1 credit) or interview prep (1 credit). Asking holds the credits; they're only taken when the work succeeds,
+so a failure costs nothing and shows an error code instead. Credits come from referrals: when someone signs up with
+a friend's code and verifies their email, both get 30 (admins can also add credits, and buying comes next). Each
+email address can only earn sign-up credits once: a one-way hash of every address is kept even after an account is
+deleted, Gmail dots and `+tags` count as the same address, throwaway inbox domains get nothing, and a code earns at
+most 5 rewards a day and 20 in total. The admin panel lists every referral, including the declined ones and why.
+
 Each run works in batches of up to 20 jobs:
 
 1. **Scout** looks at the company career pages I've added and a few job APIs, and keeps only jobs that fit my
    resume. Once it has 20 it stops, and those 20 become the next batch.
 2. **Salary** takes the salary from the posting, or estimates it from salary sites. If there's nothing, it's NA.
 3. **Scorer** gives every job an ATS score against my resume and ranks the batch.
-4. **Tailor, Coach and Writer** then go through the jobs best-first: a tailored resume (my original .docx with
-   edits, same file name), interview prep (MCQs with explanations, technical and coding questions) and a cover
-   letter.
+4. **Tailor, Coach and Writer** run when someone asks for them on a job (`--work`, started straight from the app):
+   a tailored resume (the original .docx with edits, same file name), a cover letter, and interview prep (MCQs with
+   explanations, technical and coding questions).
+
+Every posting the scouts fetch also goes on a shared **Jobs** board (kept 30 days) that anyone can search with
+keywords, location, date posted, workplace, job type and salary. Jobs the scout rated for you show your match.
 
 Every job gets its own folder in storage with the job details, the scoring report, the tailored resume (docx
 and pdf), the cover letter and the interview pack. In the app I can open a job, pick which resume to send,
@@ -59,7 +70,7 @@ Nothing gets scraped. For LinkedIn, Indeed and similar sites only the domain is 
 It takes about half an hour the first time.
 
 **Supabase**
-1. Create a free project and run the files in `supabase/migrations/` in order (001 to 010) in the SQL editor.
+1. Create a free project and run the files in `supabase/migrations/` in order (001 to 012) in the SQL editor.
    Create your own user first (Authentication > Users > Add user, tick Auto Confirm) because 002 makes the
    oldest user the owner.
 2. Turn on "Allow new users to sign up" and "Confirm email" under Authentication > Sign In / Providers. Accounts
@@ -137,7 +148,8 @@ Accounts on @rajkumar.codes get the admin tools:
 - **Pause all** on Home is a kill switch for every agent.
 - **Run now** under Agents.
 - **Shared keys** in Settings, including which key is currently in use. Only admins can add keys.
-- **Users** panel.
+- **Admin panel** (Settings > the shield icon): users with their credits (add or remove, with a note they see),
+  adding a job by hand to the board or to one person, and the referrals list.
 - **AI models**:
   - per-agent model order, e.g. Groq for the Scout and Gemini for tailoring
   - a scorecard per model

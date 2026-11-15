@@ -7,13 +7,14 @@ import '../api.dart';
 import '../countries.dart';
 import '../models.dart';
 import '../widgets/common.dart';
+import '../widgets/credits.dart';
 import 'jobs.dart' show confirmDeleteJob;
 
 class JobDetailScreen extends StatefulWidget {
-  const JobDetailScreen({super.key, required this.jobId, this.basePath = '/jobs'});
+  const JobDetailScreen({super.key, required this.jobId, this.basePath = '/matches'});
   final String jobId;
 
-  /// '/jobs' or '/custom', for the back button and links.
+  /// '/matches' or '/custom', for the back button and links.
   final String basePath;
 
   @override
@@ -63,8 +64,11 @@ class _JobDetailScreenState extends State<JobDetailScreen> {
 }
 
 class JobDetailBody extends StatelessWidget {
-  const JobDetailBody({super.key, required this.job});
+  const JobDetailBody({super.key, required this.job, this.showWork = true});
   final Job job;
+
+  /// The credits panel (off in tests, it needs the database).
+  final bool showWork;
 
   @override
   Widget build(BuildContext context) {
@@ -93,6 +97,10 @@ class JobDetailBody extends StatelessWidget {
             ScoreBadge(label: 'ATS (tailored)', score: job.tailoredAts, big: true),
             ScoreBadge(label: 'Shortlist odds', score: job.shortlist, big: true),
           ]),
+          if (showWork) ...[
+            const SizedBox(height: 16),
+            JobWorkPanel(job: job),
+          ],
           const SizedBox(height: 16),
           Card(
             child: Padding(
@@ -320,15 +328,17 @@ class _ActionBar extends StatelessWidget {
         child: PageBody(
           maxWidth: 900,
           child: Row(children: [
-            Expanded(
-              child: OutlinedButton.icon(
-                onPressed: hasInterview ? () => context.go('${job.basePath}/${job.jobId}/interview') : null,
-                icon: const Icon(Icons.school_outlined),
-                label: Text(hasInterview ? 'Prepare for interview' : 'Interview prep pending'),
-                style: OutlinedButton.styleFrom(minimumSize: const Size.fromHeight(48)),
+            if (hasInterview) ...[
+              Expanded(
+                child: OutlinedButton.icon(
+                  onPressed: () => context.go('${job.basePath}/${job.jobId}/interview'),
+                  icon: const Icon(Icons.school_outlined),
+                  label: const Text('Prepare for interview'),
+                  style: OutlinedButton.styleFrom(minimumSize: const Size.fromHeight(48)),
+                ),
               ),
-            ),
-            const SizedBox(width: 12),
+              const SizedBox(width: 12),
+            ],
             Expanded(
               child: FilledButton.icon(
                 onPressed: () => showModalBottomSheet(

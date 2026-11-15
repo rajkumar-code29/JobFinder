@@ -101,16 +101,6 @@ class Api {
         'p_batch': batch,
       }) as String;
 
-  /// Starts a run for this user's custom jobs only.
-  static Future<int> requestCustomRun() async => (await supa.rpc('request_custom_run') as num).toInt();
-
-  static Future<(int?, String?)> customRunRequestStatus(int id) async {
-    final rows = await supa.rpc('custom_run_request_status', params: {'p_id': id}) as List;
-    if (rows.isEmpty) return (null, null);
-    final r = rows.first as Map<String, dynamic>;
-    return ((r['status_code'] as num?)?.toInt(), r['message'] as String?);
-  }
-
   /// Puts a failed job back in the queue, keeping whatever the agents already made.
   static Future<void> retryJob(Job job) => supa.from('jobs').update({
         'attempts': 0,
@@ -121,6 +111,108 @@ class Api {
                 ? 'scored'
                 : 'new',
       }).eq('job_id', job.jobId);
+
+  // credits and requested work (migration 012)
+  static Stream<List<JobRequest>> requestsStream() => supa
+      .from('job_requests')
+      .stream(primaryKey: ['id'])
+      .eq('user_id', uid)
+      .order('created_at')
+      .limit(300)
+      .map((rows) => rows.map(JobRequest.new).toList());
+
+  static Future<Credits> credits() async {
+    final rows = await supa.rpc('my_credits') as List;
+    if (rows.isEmpty) return const Credits(0, 0);
+    final r = rows.first as Map<String, dynamic>;
+    return Credits((r['credits'] as num).toInt(), (r['held'] as num).toInt());
+  }
+
+  /// kinds: 'tailor' (resume + cover letter) and/or 'interview'. Holds the credits; they're only taken on success.
+  static Future<Map<String, dynamic>> requestWork(String jobId, List<String> kinds) async =>
+      Map<String, dynamic>.from(await supa.rpc('request_job_work', params: {'p_job_id': jobId, 'p_kinds': kinds}) as Map);
+
+  static Future<void> cancelRequest(int id) => supa.rpc('cancel_job_request', params: {'p_id': id});
+
+  static Future<List<Map<String, dynamic>>> ledger() async =>
+      List<Map<String, dynamic>>.from(await supa.from('credit_ledger').select().order('at', ascending: false).limit(100));
+
+  // referrals
+  static Future<Map<String, dynamic>> myReferrals() async {
+    final rows = await supa.rpc('my_referrals') as List;
+    return rows.isEmpty ? {} : Map<String, dynamic>.from(rows.first as Map);
+  }
+
+  static Future<Map<String, dynamic>> applyReferralCode(String code) async =>
+      Map<String, dynamic>.from(await supa.rpc('apply_referral_code', params: {'p_code': code}) as Map);
+
+  static Future<String> regenerateReferralCode() async => await supa.rpc('regenerate_referral_code') as String;
+
+  static Future<List<Map<String, dynamic>>> adminReferrals() async =>
+      List<Map<String, dynamic>>.from(await supa.rpc('admin_referrals') as List);
+
+  // the shared Jobs board
+  static Future<List<Map<String, dynamic>>> boardSearch({
+    String query = '',
+    String location = '',
+    String remote = '',
+    String type = '',
+    int days = 0,
+    num? salaryMin,
+    String sort = 'newest',
+    int offset = 0,
+    int limit = 30,
+  }) async =>
+      List<Map<String, dynamic>>.from(await supa.rpc('board_search', params: {
+        'p_query': query,
+        'p_location': location,
+        'p_remote': remote,
+        'p_type': type,
+        'p_days': days,
+        'p_salary_min': salaryMin,
+        'p_sort': sort,
+        'p_limit': limit,
+        'p_offset': offset,
+      }) as List);
+
+  static Future<Map<String, dynamic>?> boardPosting(int id) async {
+    final rows = await supa.rpc('board_posting', params: {'p_id': id}) as List;
+    return rows.isEmpty ? null : Map<String, dynamic>.from(rows.first as Map);
+  }
+
+  /// Copies a board posting into your own jobs; returns its job id.
+  static Future<String> savePosting(int id) async => await supa.rpc('save_posting', params: {'p_id': id}) as String;
+
+  // admin: credits and jobs
+  static Future<List<Map<String, dynamic>>> adminSearchUsers(String query) async =>
+      List<Map<String, dynamic>>.from(await supa.rpc('admin_search_users', params: {'p_query': query}) as List);
+
+  static Future<int> adminAddCredits(String userId, int amount, String note) async =>
+      (await supa.rpc('admin_add_credits', params: {'p_user': userId, 'p_amount': amount, 'p_note': note}) as num).toInt();
+
+  /// To the board for everyone when [userId] is null, otherwise into that user's jobs.
+  static Future<String> adminAddJob({
+    required String title,
+    required String company,
+    required String description,
+    String? location,
+    String? url,
+    String? remote,
+    String? type,
+    String? salary,
+    String? userId,
+  }) async =>
+      await supa.rpc('admin_add_job', params: {
+        'p_title': title,
+        'p_company': company,
+        'p_description': description,
+        'p_location': location,
+        'p_url': url,
+        'p_remote': remote,
+        'p_type': type,
+        'p_salary': salary,
+        'p_user': userId,
+      }) as String;
 
   // resume builder
   static Stream<List<Map<String, dynamic>>> draftsStream() => supa

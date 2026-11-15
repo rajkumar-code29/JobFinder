@@ -32,8 +32,7 @@ class Job {
   DateTime? get appliedAt => raw['applied_at'] == null ? null : DateTime.parse(raw['applied_at'] as String).toLocal();
   String? get appliedWith => raw['applied_with'] as String?;
 
-  Map<String, String> get files =>
-      (raw['files'] as Map<String, dynamic>? ?? {}).map((k, v) => MapEntry(k, v.toString()));
+  Map<String, String> get files => (raw['files'] as Map? ?? {}).map((k, v) => MapEntry('$k', '$v'));
 
   List<AddedSkill> get addedSkills => ((raw['added_skills'] as List?) ?? [])
       .whereType<Map>()
@@ -55,7 +54,33 @@ class Job {
   int? get customBatch => raw['custom_batch'] as int?;
 
   /// Where its pages live in the app.
-  String get basePath => isCustom ? '/custom' : '/jobs';
+  String get basePath => isCustom ? '/custom' : '/matches';
+
+  bool get hasTailored => files.containsKey('resume_docx') && files.containsKey('cover_letter_docx');
+  bool get hasInterview => files.containsKey('interview');
+}
+
+/// Something the user asked for on a job (migration 012): score (free), tailor (resume + cover letter), interview.
+class JobRequest {
+  JobRequest(this.raw);
+  final Map<String, dynamic> raw;
+  int get id => (raw['id'] as num).toInt();
+  String get jobId => raw['job_id'] as String;
+  String get kind => raw['kind'] as String;
+  int get cost => (raw['cost'] as num?)?.toInt() ?? 0;
+  String get status => raw['status'] as String;
+  String? get errorCode => raw['error_code'] as String?;
+  String? get error => raw['error'] as String?;
+  DateTime get createdAt => DateTime.parse(raw['created_at'] as String).toLocal();
+  bool get active => status == 'queued' || status == 'running';
+}
+
+/// Credits: balance, held for queued work, and what's left to spend.
+class Credits {
+  const Credits(this.balance, this.held);
+  final int balance;
+  final int held;
+  int get available => balance - held;
 }
 
 class Batch {

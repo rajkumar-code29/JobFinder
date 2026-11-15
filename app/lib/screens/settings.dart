@@ -83,7 +83,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
         IconButton(tooltip: 'Setup guide', icon: const Icon(Icons.menu_book_outlined), onPressed: () => context.push('/guide')),
         IconButton(tooltip: 'How it works', icon: const Icon(Icons.help_outline), onPressed: () => context.push('/help')),
         if (Api.isAdmin)
-          IconButton(tooltip: 'Users (admin)', icon: const Icon(Icons.group_outlined), onPressed: () => context.push('/admin/users')),
+          IconButton(tooltip: 'Admin', icon: const Icon(Icons.admin_panel_settings_outlined), onPressed: () => context.push('/admin')),
       ]),
       floatingActionButton: _dirty
           ? FloatingActionButton.extended(
@@ -189,14 +189,9 @@ class _SettingsScreenState extends State<SettingsScreen> {
                         value: ((s['batch_size'] as num?) ?? 20).toInt(), min: 5, max: 30, suffix: '',
                         onChanged: (v) => _set('batch_size', v),
                       ),
-                      _SliderRow(
-                        label: 'Jobs fully processed per hourly run',
-                        value: (s['max_jobs_per_run'] as num).toInt(), min: 1, max: 10, suffix: '',
-                        onChanged: (v) => _set('max_jobs_per_run', v),
-                      ),
                       Text(
-                        'Each processed job uses ~6 Gemini calls. Keep this low on the free tier; '
-                        'leftover jobs are processed in later runs.',
+                        'Finding and scoring jobs is free. Tailored resumes, cover letters and interview prep happen '
+                        'when you ask for them on a job (1 credit each).',
                         style: Theme.of(context).textTheme.bodySmall,
                       ),
                     ]),
@@ -1023,11 +1018,27 @@ class _AccountSection extends StatelessWidget {
       child: Column(children: [
         ListTile(
           contentPadding: EdgeInsets.zero,
+          leading: const Icon(Icons.toll_outlined),
+          title: const Text('Credits and invites'),
+          subtitle: const Text('Your balance, history, and 30 credits for every friend who joins'),
+          trailing: const Icon(Icons.chevron_right),
+          onTap: () => context.push('/credits'),
+        ),
+        ListTile(
+          contentPadding: EdgeInsets.zero,
           leading: const Icon(Icons.privacy_tip_outlined),
           title: const Text('Privacy and AI'),
           subtitle: const Text('What is stored and which AI providers see it'),
           trailing: const Icon(Icons.chevron_right),
           onTap: () => context.push('/privacy-info'),
+        ),
+        ListTile(
+          contentPadding: EdgeInsets.zero,
+          leading: const Icon(Icons.history),
+          title: const Text('Agent activity'),
+          subtitle: const Text('What the agents did and when'),
+          trailing: const Icon(Icons.chevron_right),
+          onTap: () => context.push('/agents'),
         ),
         ListTile(
           contentPadding: EdgeInsets.zero,

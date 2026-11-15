@@ -78,9 +78,9 @@ const statusColors = {
 };
 
 const statusLabels = {
-  'new': 'Queued',
-  'scored': 'Scored',
-  'tailored': 'Tailored',
+  'new': 'Scoring',
+  'scored': 'Matched',
+  'tailored': 'Tailoring',
   'ready': 'Ready',
   'applied': 'Applied',
   'error': 'Error',

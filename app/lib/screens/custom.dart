@@ -6,6 +6,7 @@ import 'package:supabase_flutter/supabase_flutter.dart';
 import '../api.dart';
 import '../models.dart';
 import '../widgets/common.dart';
+import '../widgets/credits.dart';
 import 'jobs.dart';
 
 /// Jobs the user found themselves: paste the title and JD, then process them on demand.
@@ -52,7 +53,7 @@ class _CustomJobsScreenState extends State<CustomJobsScreen> {
                 const SizedBox(height: 12),
                 _AddJobCard(ready: jobs != null, nextBatch: lastBatch + 1),
                 const SizedBox(height: 12),
-                if (jobs != null) _ProcessCard(jobs: jobs),
+                if (jobs != null) _HowItWorks(jobs: jobs),
                 if (jobs == null)
                   const Padding(padding: EdgeInsets.all(24), child: Center(child: CircularProgressIndicator())),
                 for (final b in batches) ...[
@@ -114,6 +115,8 @@ class _AddJobCardState extends State<_AddJobCard> {
   final _batch = TextEditingController();
   bool _batchSet = false;
   bool _saving = false;
+  bool _tailor = true;
+  bool _interview = false;
 
   @override
   void didUpdateWidget(_AddJobCard old) {
@@ -155,10 +158,20 @@ class _AddJobCardState extends State<_AddJobCard> {
         batch: int.tryParse(_batch.text.trim()),
       );
       if (!mounted) return;
+      final kinds = [if (_tailor) 'tailor', if (_interview) 'interview'];
+      String note;
+      try {
+        await Api.requestWork(id, kinds); // scoring is always included and free
+        note = kinds.isEmpty
+            ? 'Added $id. It gets scored against your resume in a few minutes.'
+            : 'Added $id. Scoring it now, then ${kinds.length == 2 ? 'the tailored resume, cover letter and interview prep' : kinds.first == 'tailor' ? 'the tailored resume and cover letter' : 'interview prep'}. It takes a few minutes.';
+      } catch (e) {
+        note = 'Added $id, but: ${errorText(e)} Open the job to try again.';
+      }
       for (final c in [_title, _company, _jd, _link]) {
         c.clear();
       }
-      toast(context, 'Added $id to batch ${_batch.text.trim()}. Press Process now when you\'re done adding.');
+      if (mounted) toast(context, note);
     } catch (e) {
       if (mounted) toast(context, 'Could not add the job: ${_errorText(e)}');
     } finally {
@@ -237,7 +250,22 @@ class _AddJobCardState extends State<_AddJobCard> {
                 SizedBox(width: 150, child: batch),
               ]);
             }),
-            const SizedBox(height: 16),
+            const SizedBox(height: 8),
+            CheckboxListTile(
+              contentPadding: EdgeInsets.zero,
+              value: _tailor,
+              onChanged: (v) => setState(() => _tailor = v ?? false),
+              title: const Text('Tailored resume and cover letter'),
+              subtitle: const Text('1 credit, only used if it works'),
+            ),
+            CheckboxListTile(
+              contentPadding: EdgeInsets.zero,
+              value: _interview,
+              onChanged: (v) => setState(() => _interview = v ?? false),
+              title: const Text('Interview prep'),
+              subtitle: const Text('1 credit, only used if it works'),
+            ),
+            const SizedBox(height: 8),
             Align(
               alignment: Alignment.centerRight,
               child: FilledButton.icon(
@@ -255,99 +283,22 @@ class _AddJobCardState extends State<_AddJobCard> {
   }
 }
 
-class _ProcessCard extends StatefulWidget {
-  const _ProcessCard({required this.jobs});
+class _HowItWorks extends StatelessWidget {
+  const _HowItWorks({required this.jobs});
   final List<Job> jobs;
-
-  @override
-  State<_ProcessCard> createState() => _ProcessCardState();
-}
-
-class _ProcessCardState extends State<_ProcessCard> {
-  bool _busy = false;
-
-  List<Job> get _queued => widget.jobs
-      .where((j) => const {'new', 'scored', 'tailored'}.contains(j.status) && (j.raw['attempts'] as int? ?? 0) < 3)
-      .toList();
-  List<Job> get _failed => widget.jobs.where((j) => j.status == 'error').toList();
-
-  Future<void> _process() async {
-    setState(() => _busy = true);
-    try {
-      final id = await Api.requestCustomRun();
-      int? code;
-      String? message;
-      for (var i = 0; i < 10 && code == null; i++) {
-        await Future.delayed(const Duration(seconds: 1));
-        (code, message) = await Api.customRunRequestStatus(id);
-      }
-      if (!mounted) return;
-      toast(
-        context,
-        code == 204
-            ? 'Started. Each job takes a few minutes and turns Ready here when it\'s done.'
-            : code == null
-                ? 'Requested. GitHub hasn\'t answered yet, check Agents > Runs in a minute.'
-                : 'GitHub refused the run ($code): ${message ?? ''}',
-      );
-    } catch (e) {
-      if (mounted) toast(context, _errorText(e));
-    } finally {
-      if (mounted) setState(() => _busy = false);
-    }
-  }
-
-  Future<void> _retry() async {
-    setState(() => _busy = true);
-    try {
-      for (final j in _failed) {
-        await Api.retryJob(j);
-      }
-      if (mounted) toast(context, 'Back in the queue. Press Process now to run them.');
-    } catch (e) {
-      if (mounted) toast(context, 'Could not retry: ${_errorText(e)}');
-    } finally {
-      if (mounted) setState(() => _busy = false);
-    }
-  }
 
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
-    final queued = _queued.length, failed = _failed.length;
-    final ready = widget.jobs.where((j) => j.isReady).length;
+    final ready = jobs.where((j) => j.hasTailored).length;
+    final failed = jobs.where((j) => j.status == 'error').length;
     return Card(
-      child: Padding(
-        padding: const EdgeInsets.all(16),
-        child: Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
-          Wrap(spacing: 12, runSpacing: 12, crossAxisAlignment: WrapCrossAlignment.center, children: [
-            Column(crossAxisAlignment: CrossAxisAlignment.start, mainAxisSize: MainAxisSize.min, children: [
-              Text(queued == 0 ? 'Nothing waiting' : '$queued waiting to be processed', style: theme.textTheme.titleMedium),
-              Text('$ready ready${failed > 0 ? ' · $failed failed' : ''}', style: theme.textTheme.bodySmall),
-            ]),
-            Wrap(spacing: 8, runSpacing: 8, children: [
-              if (failed > 0)
-                OutlinedButton.icon(
-                  onPressed: _busy ? null : _retry,
-                  icon: const Icon(Icons.refresh),
-                  label: Text('Retry failed ($failed)'),
-                ),
-              FilledButton.icon(
-                onPressed: _busy || queued == 0 ? null : _process,
-                icon: _busy
-                    ? const SizedBox(width: 16, height: 16, child: CircularProgressIndicator(strokeWidth: 2))
-                    : const Icon(Icons.play_arrow),
-                label: const Text('Process now'),
-              ),
-            ]),
-          ]),
-          const SizedBox(height: 8),
-          Text(
-            'Runs on your own API keys and per-run call limit, so on free tiers a run gets through a handful of jobs. '
-            'Anything left stays queued for the next press.',
-            style: theme.textTheme.bodySmall,
-          ),
-        ]),
+      child: ListTile(
+        leading: Icon(Icons.info_outline, color: theme.colorScheme.primary),
+        title: Text(jobs.isEmpty ? 'How it works' : '${jobs.length} custom job${jobs.length == 1 ? '' : 's'} · $ready ready'
+            '${failed > 0 ? ' · $failed need attention' : ''}'),
+        subtitle: const Text('Each job you add is scored against your resume for free. Tick what else you want when you '
+            'add it, or open the job later: a tailored resume and cover letter, or interview prep, 1 credit each.'),
       ),
     );
   }

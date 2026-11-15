@@ -32,9 +32,17 @@ void main() {
 
   testWidgets('tabs fit on a phone, and custom jobs and the builder highlight Create', (tester) async {
     await phone(tester);
-    for (final (location, index) in [('/custom/JF-20261114-ABCDE', 2), ('/resume-builder/cv/x', 2), ('/guide', 4), ('/', 0)]) {
+    for (final (location, index) in [
+      ('/custom/JF-20261114-ABCDE', 3),
+      ('/resume-builder/cv/x', 3),
+      ('/guide', 4),
+      ('/credits', 4),
+      ('/matches/JF-1', 2),
+      ('/jobs/p/12', 1),
+      ('/', 0),
+    ]) {
       await tester.pumpWidget(MaterialApp(home: AppShell(location: location, child: const SizedBox())));
-      for (final label in ['Home', 'Jobs', 'Create', 'Agents', 'Settings']) {
+      for (final label in ['Home', 'Jobs', 'Matches', 'Create', 'Settings']) {
         expect(find.text(label), findsOneWidget);
       }
       expect(tester.widget<NavigationBar>(find.byType(NavigationBar)).selectedIndex, index, reason: location);
@@ -53,8 +61,9 @@ void main() {
       expect(find.text('Custom Jobs'), findsOneWidget);
       expect(find.text('Batch number'), findsOneWidget);
       expect(find.text('3'), findsOneWidget); // next batch prefilled
-      expect(find.text('1 waiting to be processed'), findsOneWidget);
-      expect(find.text('Retry failed (1)'), findsOneWidget);
+      expect(find.textContaining('3 custom jobs'), findsOneWidget);
+      expect(find.textContaining('1 need attention'), findsOneWidget);
+      expect(find.text('Tailored resume and cover letter'), findsOneWidget);
       await tester.scrollUntilVisible(find.text('Batch 1'), 300, scrollable: find.byType(Scrollable).first);
       expect(find.text('Batch 2'), findsOneWidget);
       expect(tester.takeException(), isNull);
@@ -65,7 +74,7 @@ void main() {
     await tester.pumpWidget(MaterialApp(home: CustomJobsScreen(jobs: Stream.value(const []))));
     await tester.pumpAndSettle();
     expect(find.text('1'), findsOneWidget);
-    expect(find.text('Nothing waiting'), findsOneWidget);
+    expect(find.text('How it works'), findsOneWidget);
     await tester.ensureVisible(find.text('Add job'));
     await tester.pumpAndSettle();
     await tester.tap(find.text('Add job'));
@@ -80,7 +89,7 @@ void main() {
     expect(custom.isCustom, isTrue);
     expect(custom.customBatch, 3);
     expect(custom.basePath, '/custom');
-    expect(found.basePath, '/jobs');
+    expect(found.basePath, '/matches');
   });
 }
 

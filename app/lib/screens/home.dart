@@ -7,6 +7,7 @@ import '../api.dart';
 import '../models.dart';
 import '../theme.dart';
 import '../widgets/common.dart';
+import '../widgets/credits.dart';
 import '../widgets/onboarding.dart';
 import 'agents.dart';
 
@@ -63,6 +64,7 @@ class _HomeScreenState extends State<HomeScreen> {
     final running = _runs.where((r) => r.status == 'running').toList();
     return Scaffold(
       appBar: AppBar(title: const Text('Dashboard'), actions: [
+        const CreditsChip(),
         IconButton(onPressed: () => context.go('/help'), icon: const Icon(Icons.help_outline), tooltip: 'How it works'),
         IconButton(onPressed: _load, icon: const Icon(Icons.refresh), tooltip: 'Refresh'),
       ]),
@@ -168,9 +170,9 @@ class _StatGrid extends StatelessWidget {
     final scheme = Theme.of(context).colorScheme;
     final tiles = [
       (Icons.manage_search, 'Jobs scanned', '${stats.totalScanned}', null, scheme.primary),
-      (Icons.filter_alt_outlined, 'Matched to resume', '${stats.totalMatched}', '/jobs', scheme.secondary),
-      (Icons.task_alt, 'Ready to apply', '${stats.ready}', '/jobs?status=ready', scheme.tertiary),
-      (Icons.send_outlined, 'Applied', '${stats.applied}', '/jobs?status=applied', Colors.green.shade600),
+      (Icons.filter_alt_outlined, 'Matched to resume', '${stats.totalMatched}', '/matches', scheme.secondary),
+      (Icons.task_alt, 'Ready to apply', '${stats.ready}', '/matches?status=ready', scheme.tertiary),
+      (Icons.send_outlined, 'Applied', '${stats.applied}', '/matches?status=applied', Colors.green.shade600),
       (Icons.error_outline, 'Errors (24h / all)', '${stats.errors24h} / ${stats.totalErrors}', '/agents?errors=1', scheme.error),
       (Icons.smart_toy_outlined, 'Agents working', '${stats.agentsRunning}', '/agents', scheme.primary),
     ];
@@ -304,7 +306,7 @@ class _CurrentBatchCard extends StatelessWidget {
                 subtitle: Text('${b.jobCount} jobs · started ${ago(b.createdAt)}'
                     '${b.done ? ' · the next batch starts on the next run' : ''}'),
                 trailing: const Icon(Icons.chevron_right),
-                onTap: () => context.go('/jobs'),
+                onTap: () => context.go('/matches'),
               ),
             ),
           );

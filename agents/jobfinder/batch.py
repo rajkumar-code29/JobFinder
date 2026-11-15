@@ -1,19 +1,17 @@
 """Batches.
 
-Scout fills a batch (batch_size jobs), then: salary for all, score + rank all, then tailor/coach/writer one
-job at a time by rank. No new scan until the batch is done. Every stage picks up where it left off, so a
-batch usually spans a few runs.
+Scout fills a batch (batch_size jobs), then salary and score + rank for all of them. That's the free part:
+tailored resumes, cover letters and interview prep only happen when the user asks for them (work.py). No new
+scan until the batch is scored. Every stage picks up where it left off.
 """
 from __future__ import annotations
 
-import json
 import logging
 
 from . import config, control, db, llm
-from .agents import coach, salary, scorer, scout, tailor, writer
+from .agents import salary, scorer, scout
 
 log = logging.getLogger("jobfinder")
-ACTIVE = ("new", "scored", "tailored")
 
 
 def _check() -> None:
@@ -52,11 +50,11 @@ def process(run: db.PipelineRun, batch: dict, profile: dict, brief: str, setting
     label = f"Batch #{batch['number']}"
     jobs = db.batch_jobs(batch["id"])
 
-    def active():
-        return [j for j in jobs if j["status"] in ACTIVE and int(j.get("attempts") or 0) < config.MAX_ATTEMPTS]
+    def unscored():
+        return [j for j in jobs if j["status"] == "new" and int(j.get("attempts") or 0) < config.MAX_ATTEMPTS]
 
     # salary
-    todo = [j for j in active() if j["salary_text"] == config.NA and not (j.get("meta") or {}).get("salary_checked")]
+    todo = [j for j in unscored() if j["salary_text"] == config.NA and not (j.get("meta") or {}).get("salary_checked")]
     if todo:
         db.update_batch(batch["id"], {"stage": "salary"})
         run.note(f"{label}: salary check for {len(todo)} jobs")
@@ -70,7 +68,7 @@ def process(run: db.PipelineRun, batch: dict, profile: dict, brief: str, setting
                 log.warning("salary failed for %s: %s", job["job_id"], exc)
 
     # score, then rank
-    todo = [j for j in active() if j["status"] == "new"]
+    todo = unscored()
     if todo:
         db.update_batch(batch["id"], {"stage": "scoring"})
         run.note(f"{label}: scoring {len(todo)} jobs")
@@ -78,11 +76,13 @@ def process(run: db.PipelineRun, batch: dict, profile: dict, brief: str, setting
             _check()
             try:
                 scorer.run(run, job, profile)
+                run.processed += 1
             except llm.StopUser:
                 raise
             except Exception as exc:
                 mark_failed(run, job, exc)
-    if any(j["status"] == "new" for j in active()):
+            run.save()
+    if unscored():
         run.note(f"{label}: some jobs still need scoring - continuing next run")
         return
 
@@ -91,37 +91,5 @@ def process(run: db.PipelineRun, batch: dict, profile: dict, brief: str, setting
         if job.get("batch_rank") != rank:
             db.update_job(job["job_id"], {"batch_rank": rank})
             job["batch_rank"] = rank
-
-    # tailor / coach / writer, best first
-    db.update_batch(batch["id"], {"stage": "tailoring"})
-    queue = sorted([j for j in active() if j["status"] in ("scored", "tailored")], key=lambda j: j.get("batch_rank") or 999)
-    per_run = max(1, int(settings.get("max_jobs_per_run") or 3))
-    for job in queue[:per_run]:
-        _check()
-        try:
-            report = json.loads(db.download(job["files"]["report_json"]))
-            if job["status"] == "scored":
-                tailor.run(run, job, profile, report, settings["target_ats"])
-            _check()
-            if "interview" not in (job.get("files") or {}):
-                coach.run(run, job, brief, report)
-            _check()
-            if "cover_letter_docx" not in (job.get("files") or {}):
-                writer.run(run, job, profile, brief)
-            db.update_job(job["job_id"], {"status": "ready", "error": None})
-            job["status"] = "ready"
-            run.processed += 1
-            run.note(f"{label} #{job['batch_rank']} ready: {job['title']} @ {job['company']} "
-                     f"(ATS {job.get('ats_score')} -> {job.get('tailored_ats_score')})")
-        except llm.StopUser:
-            raise
-        except Exception as exc:
-            mark_failed(run, job, exc)
-        run.save()
-
-    remaining = len(active())
-    if remaining == 0:
-        db.update_batch(batch["id"], {"status": "done", "stage": "done", "finished_at": db.now_iso()})
-        run.note(f"{label} finished")
-    else:
-        run.note(f"{label}: {remaining} jobs still to process - continuing next run")
+    db.update_batch(batch["id"], {"status": "done", "stage": "done", "finished_at": db.now_iso()})
+    run.note(f"{label} finished: {len(ranked)} jobs scored and ranked")

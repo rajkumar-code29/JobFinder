@@ -1,11 +1,11 @@
-"""Hourly run. Goes through every enabled user with their own keys and call budget, then runs the batch
-flow in batch.py.
+"""Hourly run. Goes through every enabled user and runs the batch flow in batch.py: find and score jobs (free).
 
 python -m jobfinder.pipeline [--trigger manual] [--all-sources] [--skip-scout] [--user EMAIL] [--job JF-...]
-                             [--compare ID] [--custom USER_ID]
+                             [--compare ID] [--work USER_ID]
 
---custom processes only that user's jobs from the Custom page. It's started from the app and runs in its own
-concurrency group, so it can overlap an hourly run.
+--work does the work that user asked for in the app (tailored resume + cover letter, interview prep; see work.py).
+It's started by request_job_work() and runs in its own concurrency group, so it can overlap an hourly run. The
+hourly run also picks up requests nobody started within 10 minutes. --custom is the old name for --work.
 """
 from __future__ import annotations
 
@@ -15,7 +15,7 @@ import logging
 import sys
 import uuid
 
-from . import batch, config, control, db, llm
+from . import batch, config, control, db, llm, work
 from .agents import coach, profile as profile_agent, salary, scorer, tailor, writer
 from .keys import AI_PROVIDERS, KeyStateStore, build_pools, shared_keys
 
@@ -49,39 +49,22 @@ def process(run: db.PipelineRun, job: dict, profile: dict, brief: str, settings:
     run.note(f"{jid} ready: {job['title']} @ {job['company']} (ATS {job.get('ats_score')} -> {job.get('tailored_ats_score')})")
 
 
-def process_custom(run: db.PipelineRun, profile: dict, brief: str, settings: dict) -> None:
-    """Everything waiting on the Custom page, until the call budget runs out."""
-    jobs = db.custom_jobs(run.user_id)
-    if not jobs:
-        run.note("No custom jobs waiting")
-        return
-    run.note(f"{len(jobs)} custom job(s) to process")
-    for job in jobs:
-        if control.paused():
-            raise llm.Paused("Agents paused by an admin")
-        try:
-            process(run, job, profile, brief, settings)
-        except llm.StopUser:
-            raise
-        except Exception as exc:
-            batch.mark_failed(run, job, exc)
-        run.save()
-
-
 def run_user(account: dict, args, store: KeyStateStore, shared: dict, only_job: dict | None) -> bool:
     uid = account["user_id"]
     run = db.PipelineRun(args.trigger, uid)
     run.note(f"User {db.user_label(uid)}")
     status = "success"
     pools = build_pools(account, db.user_api_keys(uid), store, shared)
-    llm.activate({p: pools[p] for p in AI_PROVIDERS}, int(account.get("llm_calls_per_run") or 40),
-                 on_event=run.note, should_stop=control.paused)
+    budget = int(account.get("llm_calls_per_run") or 40)
+    if args.work:
+        budget = max(budget, 80)  # paid-for work shouldn't stop at the hourly scan's budget
+    llm.activate({p: pools[p] for p in AI_PROVIDERS}, budget, on_event=run.note, should_stop=control.paused)
     try:
         if not any(pools[p] for p in AI_PROVIDERS):
             run.note("No AI provider key available (Gemini, Groq, ...): add one in Settings > API keys. Skipping this user.")
             return True
         settings = db.get_settings(uid)
-        if not args.custom:  # leave the clean-up to the hourly run
+        if not args.work:  # leave the clean-up to the hourly run
             try:
                 removed = db.cleanup_old_jobs(uid, config.JOB_RETENTION_DAYS)
                 if removed:
@@ -89,10 +72,19 @@ def run_user(account: dict, args, store: KeyStateStore, shared: dict, only_job: 
             except Exception as exc:
                 log.warning("clean-up failed: %s", exc)
         profile = profile_agent.run(run)
+        brief = profile_agent.brief(profile) if profile else ""
+        if args.work:
+            requests = db.queued_requests(uid)
+            run.note(f"{len(requests)} requested task(s) to do")
+            work.process(run, requests, profile, brief, settings)
+            return True
         if profile is None:
+            # requested work still gets closed, so its credits are released
+            stale = db.queued_requests(uid, older_than_minutes=10)
+            if stale:
+                work.process(run, stale, None, "", settings)
             run.note("No parent resume uploaded yet (Settings > Parent documents). Skipping this user.")
             return True
-        brief = profile_agent.brief(profile)
 
         if only_job:  # --job reprocesses one job from scratch
             try:
@@ -102,8 +94,6 @@ def run_user(account: dict, args, store: KeyStateStore, shared: dict, only_job: 
             except Exception as exc:
                 db.update_job(only_job["job_id"], {"error": str(exc)[:2000]})
                 raise
-        elif args.custom:
-            process_custom(run, profile, brief, settings)
         else:
             current = db.open_batch(uid)
             if current is None and not args.skip_scout:
@@ -114,6 +104,11 @@ def run_user(account: dict, args, store: KeyStateStore, shared: dict, only_job: 
             run.save()
             if current is not None:
                 batch.process(run, current, profile, brief, settings)
+        # requests whose own run never started (dispatch failed or still queued behind GitHub)
+        stale = db.queued_requests(uid, older_than_minutes=10)
+        if stale and not only_job:
+            run.note(f"Doing {len(stale)} requested task(s) that were still waiting")
+            work.process(run, stale, profile, brief, settings)
     except llm.Paused:
         run.note("Agents paused by an admin - stopping")
     except llm.StopUser as exc:
@@ -140,8 +135,10 @@ def main(argv=None) -> int:
     ap.add_argument("--user", help="only run for this user (email)")
     ap.add_argument("--job", help="(re)process a single job id")
     ap.add_argument("--compare", type=int, help="run a model comparison (admin > Models > Compare)")
-    ap.add_argument("--custom", help="process this user's Custom page jobs (user id)")
+    ap.add_argument("--work", help="do the work this user asked for in the app (user id)")
+    ap.add_argument("--custom", help=argparse.SUPPRESS)  # old name for --work
     args = ap.parse_args(argv)
+    args.work = args.work or args.custom
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
 
     if control.paused():
@@ -150,8 +147,9 @@ def main(argv=None) -> int:
     if args.compare:
         from . import compare
         return compare.run(args.compare)
-    if args.custom:
-        return run_custom(args)
+    db.expire_stale_requests()
+    if args.work:
+        return run_work(args)
     db.expire_stale_agent_runs()
     if args.trigger == "schedule" and not (args.job or args.user) and db.scheduled_run_since(minutes=40):
         # the Cloudflare cron and the GitHub backup cron can both fire
@@ -161,6 +159,10 @@ def main(argv=None) -> int:
         db.prune_seen()
     except Exception as exc:
         log.warning("could not prune seen_postings: %s", exc)
+    try:
+        db.prune_postings(config.JOB_RETENTION_DAYS)
+    except Exception as exc:
+        log.warning("could not prune postings: %s", exc)
     store = KeyStateStore()
     accounts = db.active_accounts()
     only_job = None
@@ -190,17 +192,17 @@ def main(argv=None) -> int:
     return 0 if ok else 1
 
 
-def run_custom(args) -> int:
+def run_work(args) -> int:
     try:
-        uid = str(uuid.UUID(args.custom))
+        uid = str(uuid.UUID(args.work))
     except ValueError:
-        log.error("--custom needs a user id, got %r", args.custom)
+        log.error("--work needs a user id, got %r", args.work)
         return 1
     account = next((a for a in db.active_accounts() if a["user_id"] == uid), None)
     if account is None:
         log.error("User %s isn't an active, approved account", uid)
         return 1
-    args.trigger = "custom"
+    args.trigger = "work"
     store = KeyStateStore()
     shared = shared_keys(store)
     llm.set_routing(db.model_routing())

@@ -12,10 +12,15 @@ class AppShell extends StatelessWidget {
   // the first path is where the tab goes; the others also highlight it
   static const _tabs = [
     (paths: ['/'], label: 'Home', icon: Icons.space_dashboard_outlined, selected: Icons.space_dashboard),
-    (paths: ['/jobs'], label: 'Jobs', icon: Icons.work_outline, selected: Icons.work),
+    (paths: ['/jobs'], label: 'Jobs', icon: Icons.travel_explore_outlined, selected: Icons.travel_explore),
+    (paths: ['/matches'], label: 'Matches', icon: Icons.work_outline, selected: Icons.work),
     (paths: ['/create', '/custom', '/resume-builder'], label: 'Create', icon: Icons.add_circle_outline, selected: Icons.add_circle),
-    (paths: ['/agents', '/models'], label: 'Agents', icon: Icons.smart_toy_outlined, selected: Icons.smart_toy),
-    (paths: ['/settings', '/guide', '/help', '/privacy-info', '/admin', '/set-password'], label: 'Settings', icon: Icons.tune_outlined, selected: Icons.tune),
+    (
+      paths: ['/settings', '/guide', '/help', '/privacy-info', '/admin', '/set-password', '/credits', '/agents', '/models'],
+      label: 'Settings',
+      icon: Icons.tune_outlined,
+      selected: Icons.tune,
+    ),
   ];
 
   int get _index {

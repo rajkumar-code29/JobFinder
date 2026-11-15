@@ -8,7 +8,10 @@ import '../config.dart';
 import '../registration.dart';
 
 class RegisterScreen extends StatefulWidget {
-  const RegisterScreen({super.key});
+  const RegisterScreen({super.key, this.referral});
+
+  /// From an invite link (/register?ref=CODE).
+  final String? referral;
 
   @override
   State<RegisterScreen> createState() => _RegisterScreenState();
@@ -56,7 +59,7 @@ class _RegisterScreenState extends State<RegisterScreen> {
                     const SizedBox(height: 24),
                     FilledButton(onPressed: () => context.go('/login'), child: const Text('Back to sign in')),
                   ])
-                : RegisterForm(onSubmit: _submit),
+                : RegisterForm(onSubmit: _submit, referral: widget.referral),
           ),
         ),
       ),
@@ -66,8 +69,9 @@ class _RegisterScreenState extends State<RegisterScreen> {
 
 /// The sign-up form. onSubmit returns an error message, or null when it worked.
 class RegisterForm extends StatefulWidget {
-  const RegisterForm({super.key, required this.onSubmit});
+  const RegisterForm({super.key, required this.onSubmit, this.referral});
   final Future<String?> Function(Registration) onSubmit;
+  final String? referral;
 
   @override
   State<RegisterForm> createState() => _RegisterFormState();
@@ -80,6 +84,7 @@ class _RegisterFormState extends State<RegisterForm> {
   final _email = TextEditingController();
   final _password = TextEditingController();
   final _confirm = TextEditingController();
+  late final _referral = TextEditingController(text: normalizeReferralCode(widget.referral));
   bool _tried = false;
   bool _busy = false;
   String? _error;
@@ -96,6 +101,7 @@ class _RegisterFormState extends State<RegisterForm> {
       lastName: _last.text.trim(),
       email: _email.text.trim(),
       password: _password.text,
+      referralCode: normalizeReferralCode(_referral.text),
     ));
     if (mounted) {
       setState(() {
@@ -169,6 +175,14 @@ class _RegisterFormState extends State<RegisterForm> {
             autofillHints: const [AutofillHints.newPassword],
             decoration: _decoration('Confirm password'),
             validator: (v) => v != _password.text ? 'The passwords don\'t match' : null,
+          ),
+          const SizedBox(height: 12),
+          TextFormField(
+            key: const Key('referral'),
+            controller: _referral,
+            textCapitalization: TextCapitalization.characters,
+            decoration: _decoration('Referral code (optional)', hint: 'From a friend: you both get 30 credits'),
+            validator: validateReferralCode,
           ),
           if (_error != null) ...[
             const SizedBox(height: 12),

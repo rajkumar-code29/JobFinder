@@ -58,8 +58,8 @@ class _GettingStartedCardState extends State<GettingStartedCard> {
                   if (s.ready && !s.hasRun)
                     Padding(
                       padding: const EdgeInsets.only(top: 6),
-                      child: Text('Everything the agents need is in place. They start on the next hourly run and build '
-                          'your first batch of up to 20 jobs - tailored resumes appear over the following hours.',
+                      child: Text('Everything the agents need is in place. They start on the next hourly run and find '
+                          'your first matches. Open one to get a tailored resume, cover letter or interview prep.',
                           style: theme.textTheme.bodySmall),
                     ),
                   const SizedBox(height: 6),

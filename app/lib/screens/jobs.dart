@@ -5,6 +5,7 @@ import 'package:intl/intl.dart';
 import '../api.dart';
 import '../models.dart';
 import '../widgets/common.dart';
+import '../widgets/credits.dart';
 
 class JobsScreen extends StatefulWidget {
   const JobsScreen({super.key, this.initialStatus});
@@ -63,7 +64,7 @@ class _JobsScreenState extends State<JobsScreen> {
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      appBar: AppBar(title: const Text('Jobs')),
+      appBar: AppBar(title: const Text('Matches'), actions: const [CreditsChip()]),
       body: StreamBuilder<List<Batch>>(
         stream: _batches,
         builder: (context, batchSnap) => StreamBuilder<List<Job>>(
@@ -141,7 +142,7 @@ class _JobsScreenState extends State<JobsScreen> {
                 if (sections.isEmpty)
                   const SliverFillRemaining(
                     hasScrollBody: false,
-                    child: Center(child: Text('No jobs here yet - the agents build a new batch every hour.')),
+                    child: Center(child: Text('No matches yet. The agents look for jobs that fit your resume every hour.')),
                   ),
                 for (final section in sections) ...[
                   SliverToBoxAdapter(

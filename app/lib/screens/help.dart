@@ -16,27 +16,38 @@ The **Setup guide** (Settings > the book icon) walks through these steps:
 You don't need any API keys: Pounce's own keys do the AI work.
 
 ## How a run works
-The agents run every hour. Each run works in **batches** of up to 20 jobs (Settings > Jobs per batch):
-1. **Scout** - scans your company boards and the job sites and keeps only jobs that fit your resume.
+The agents run every hour, in **batches** of up to 20 jobs (Settings > Jobs per batch). This part is free:
+1. **Scout** - scans your company boards and the job sites, puts every posting on the shared **Jobs** board and keeps
+   the ones that fit your resume as your **Matches**.
 2. **Salary** - finds the salary in the posting or estimates it from salary sites.
-3. **Scorer** - gives each job an ATS score and ranks the batch, best first.
-4. **Tailor > Coach > Writer** - for each job in rank order: a tailored resume, interview prep and a cover letter.
+3. **Scorer** - gives each match an ATS score and shortlist odds, and ranks the batch, best first.
 
-A new batch starts only when the current one is finished. On free tiers expect **a few jobs per hour**, so a full
-batch takes several hours.
+## Credits
+Open a match (or save a job from the board) and pick what you want:
+- **Tailored resume and cover letter** - 1 credit.
+- **Interview prep** - 1 credit.
+
+Credits are held while the work runs (usually 2 to 5 minutes) and only used if it works. If it fails you see an error
+code and keep your credits. You get credits by inviting friends: when someone signs up with your code and verifies
+their email, you both get **30 credits** (Settings > Account > Credits and invites). Each email address can only earn
+sign-up credits once.
 
 ## The screens
-- **Home** - totals, what's running now, the current batch.
-- **Jobs** - grouped by batch and sorted by rank. Tap a job for details, **Apply** (pick the tailored or your own
-  resume) and **Prepare for interview**. Mark jobs **Applied**, or **Delete** them.
+- **Home** - totals, your credits, what's running now, the current batch.
+- **Jobs** - every job the agents have found, with search, location and filters (date posted, workplace, job type,
+  salary). Save one to your matches.
+- **Matches** - the jobs that fit your resume, grouped by batch and sorted by rank. Tap a job for details, the
+  credits options, **Apply** (pick the tailored or your own resume) and **Prepare for interview**. Mark jobs
+  **Applied**, or **Delete** them.
 - **Create** - two things in one place:
   - **Add a custom job** you found yourself: paste the title and description (plus the company and link if you
-    have them), give it a batch number, and press **Process now**. These jobs never show up in your regular batches.
+    have them), give it a batch number and tick what you want. Scoring is free; the rest is 1 credit each. These
+    jobs never show up in your regular batches.
   - **Build a CV or cover letter** in UK careers-service style: answer questions and let the AI write it, use your
     own words as typed, or start from your current resume. Review each section (regenerate, edit or keep your
     words), then download Word or PDF and, if you like, make it your master resume. The builder allows 20 AI
     requests a day.
-- **Agents** - every agent task and each run's log, including why something failed.
+- **Agent activity** (Settings > Account) - every agent task and each run's log, including why something failed.
 - **Settings** - appearance (light or dark, colour theme), documents, where and what to search, tuning, and your
   account: privacy and AI, password, sign out and **Delete my account**.
 

@@ -80,6 +80,10 @@ class PrivacyNotice extends StatelessWidget {
       _Block('How long it is kept', [
         p('Jobs you never mark as Applied are deleted after 30 days, except the ones you add on the Custom page. '
             'Everything else stays until you delete it or your account.'),
+        p('Credits: a record of credits added and used is kept for accounting. If you delete your account, those '
+            'records are kept without your name or email, and a one-way fingerprint (hash) of your email address is '
+            'kept so the same address can\'t claim sign-up credits again. The fingerprint can\'t be turned back into '
+            'your email.'),
       ]),
       _Block('Your choices', [
         p('Delete any job or draft at any time. Delete your whole account in Settings > Account: your files, jobs, '

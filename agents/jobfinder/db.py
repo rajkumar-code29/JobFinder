@@ -178,11 +178,79 @@ def update_job(job_id: str, values: dict) -> None:
     sb.table("jobs").update(values).eq("job_id", job_id).execute()
 
 
-def custom_jobs(user_id: str) -> list[dict]:
-    """Jobs added on the Custom page that still need work, lowest batch number first."""
-    return (sb.table("jobs").select("*").eq("user_id", user_id).eq("source", "custom")
-            .in_("status", ["new", "scored", "tailored"]).lt("attempts", config.MAX_ATTEMPTS)
-            .order("custom_batch").order("created_at").execute().data)
+def job_by_id(job_id: str) -> dict | None:
+    rows = sb.table("jobs").select("*").eq("job_id", job_id).limit(1).execute().data
+    return rows[0] if rows else None
+
+
+# work people asked for (migration 012)
+def queued_requests(user_id: str, older_than_minutes: int = 0) -> list[dict]:
+    q = sb.table("job_requests").select("id,job_id,kind,cost,created_at").eq("user_id", user_id).eq("status", "queued")
+    if older_than_minutes:
+        q = q.lt("created_at", (datetime.now(timezone.utc) - timedelta(minutes=older_than_minutes)).isoformat())
+    try:
+        return q.order("created_at").order("id").execute().data
+    except Exception as exc:  # before migration 012
+        log.warning("job_requests unavailable: %s", exc)
+        return []
+
+
+def claim_request(request_id: int) -> bool:
+    """queued -> running, only if nobody else got there first."""
+    rows = (sb.table("job_requests").update({"status": "running", "started_at": now_iso()})
+            .eq("id", request_id).eq("status", "queued").execute().data)
+    return bool(rows)
+
+
+def request_status(request_id: int) -> str | None:
+    rows = sb.table("job_requests").select("status").eq("id", request_id).execute().data
+    return rows[0]["status"] if rows else None
+
+
+def finish_request(request_id: int, ok: bool, code: str | None = None, error: str | None = None) -> None:
+    """Success takes the credit, failure releases the hold (finish_job_request in migration 012)."""
+    sb.rpc("finish_job_request", {"p_id": request_id, "p_ok": ok, "p_code": code, "p_error": error}).execute()
+
+
+def expire_stale_requests(minutes: int = 45) -> int:
+    """Requests left 'running' by a run that died: fail them so the credits are released."""
+    cutoff = (datetime.now(timezone.utc) - timedelta(minutes=minutes)).isoformat()
+    try:
+        rows = (sb.table("job_requests").select("id").eq("status", "running").lt("started_at", cutoff)
+                .execute().data)
+    except Exception:
+        return 0
+    for r in rows:
+        finish_request(r["id"], False, "E_INTERRUPTED", "The run stopped before finishing. Try again.")
+    return len(rows)
+
+
+# the shared Jobs board (migration 012)
+POSTING_FIELDS = ("source", "external_id", "title", "company", "location", "country", "remote", "employment_type",
+                  "url", "apply_url", "description", "salary_text", "salary_min", "salary_max", "salary_currency",
+                  "posted_at")
+
+
+def upsert_postings(jobs: list) -> int:
+    """Every fetched posting goes on the board; seen again just bumps last_seen."""
+    rows: dict[tuple[str, str], dict] = {}
+    seen_at = now_iso()
+    for j in jobs:
+        r = j.as_row()
+        row = {k: r.get(k) for k in POSTING_FIELDS}
+        row["description"] = (row.get("description") or config.NA)[:8000]
+        row["last_seen"] = seen_at
+        if row["source"] and row["external_id"] and row["title"] not in (None, config.NA):
+            rows[(row["source"], row["external_id"])] = row
+    items = list(rows.values())
+    for i in range(0, len(items), 200):
+        sb.table("postings").upsert(items[i:i + 200], on_conflict="source,external_id").execute()
+    return len(items)
+
+
+def prune_postings(days: int) -> None:
+    cutoff = (datetime.now(timezone.utc) - timedelta(days=days)).isoformat()
+    sb.table("postings").delete().lt("last_seen", cutoff).execute()
 
 
 def queued_jobs(user_id: str, limit: int) -> list[dict]:
@@ -322,10 +390,10 @@ def scheduled_run_since(minutes: int) -> bool:
 
 
 def expire_stale_agent_runs() -> None:
-    """Regular runs share one concurrency group, so anything still 'running' is left over. Custom runs have
-    their own group and may be going right now, so those are left alone unless they're past the job timeout."""
+    """Regular runs share one concurrency group, so anything still 'running' is left over. Work runs (requested in
+    the app) have their own group and may be going right now, so those are left alone unless past the job timeout."""
     since = (datetime.now(timezone.utc) - timedelta(minutes=45)).isoformat()
-    live = [r["id"] for r in sb.table("pipeline_runs").select("id").eq("status", "running").eq("trigger", "custom")
+    live = [r["id"] for r in sb.table("pipeline_runs").select("id").eq("status", "running").in_("trigger", ["custom", "work"])
             .gte("started_at", since).execute().data]
     agents = sb.table("agent_runs").update(
         {"status": "error", "message": "stopped (the run ended unexpectedly)", "finished_at": now_iso()}

@@ -7,7 +7,10 @@ import 'package:supabase_flutter/supabase_flutter.dart';
 
 import 'auth_links.dart';
 import 'config.dart';
+import 'screens/admin.dart';
 import 'screens/agents.dart';
+import 'screens/board.dart';
+import 'screens/credits.dart';
 import 'screens/create.dart';
 import 'screens/custom.dart';
 import 'screens/cv_builder.dart';
@@ -84,7 +87,7 @@ class JobFinderApp extends StatelessWidget {
     },
     routes: [
       GoRoute(path: '/login', builder: (_, _) => const LoginScreen()),
-      GoRoute(path: '/register', builder: (_, _) => const RegisterScreen()),
+      GoRoute(path: '/register', builder: (_, state) => RegisterScreen(referral: state.uri.queryParameters['ref'])),
       GoRoute(path: '/set-password', builder: (_, _) => const SetPasswordScreen()),
       ShellRoute(
         // nothing inside the shell until an admin has approved the account
@@ -93,6 +96,13 @@ class JobFinderApp extends StatelessWidget {
           GoRoute(path: '/', builder: (_, _) => const HomeScreen()),
           GoRoute(
             path: '/jobs',
+            builder: (_, _) => const BoardScreen(),
+            routes: [
+              GoRoute(path: 'p/:id', builder: (_, state) => PostingScreen(id: int.parse(state.pathParameters['id']!))),
+            ],
+          ),
+          GoRoute(
+            path: '/matches',
             builder: (_, state) => JobsScreen(initialStatus: state.uri.queryParameters['status']),
             routes: [
               GoRoute(
@@ -148,7 +158,10 @@ class JobFinderApp extends StatelessWidget {
           GoRoute(path: '/guide', builder: (_, _) => const GuideScreen()),
           GoRoute(path: '/privacy-info', builder: (_, _) => const PrivacyScreen()),
           GoRoute(path: '/create', builder: (_, _) => const CreateScreen()),
+          GoRoute(path: '/admin', builder: (_, _) => const AdminScreen()),
           GoRoute(path: '/admin/users', builder: (_, _) => const UsersScreen()),
+          GoRoute(path: '/admin/add-job', builder: (_, _) => const AdminAddJobScreen()),
+          GoRoute(path: '/credits', builder: (_, _) => const CreditsScreen()),
         ],
       ),
     ],

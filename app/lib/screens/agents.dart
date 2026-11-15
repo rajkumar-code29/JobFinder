@@ -166,7 +166,7 @@ class AgentRunTile extends StatelessWidget {
           Text(ago(run.startedAt), style: Theme.of(context).textTheme.labelSmall),
           if (d != null) Text('${d.inSeconds}s', style: Theme.of(context).textTheme.labelSmall),
         ]),
-        onTap: run.jobId == null ? null : () => context.go('/jobs/${run.jobId}'),
+        onTap: run.jobId == null ? null : () => context.go('/matches/${run.jobId}'),
       ),
     );
   }

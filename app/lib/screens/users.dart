@@ -6,6 +6,7 @@ import 'package:go_router/go_router.dart';
 import '../api.dart';
 import '../widgets/access_gate.dart';
 import '../widgets/common.dart';
+import 'admin.dart';
 
 /// Admin view of all users.
 class UsersScreen extends StatefulWidget {
@@ -19,13 +20,20 @@ class _UsersScreenState extends State<UsersScreen> {
   late Future<List<Map<String, dynamic>>> _future = Api.adminUsers();
   StreamSubscription? _sub;
   Timer? _debounce;
+  Map<String, int> _credits = {};
+  bool _first = true;
 
   @override
   void initState() {
     super.initState();
-    // new sign-ups show up without a manual refresh
+    // credits come live from the accounts rows; new sign-ups show up without a manual refresh
     if (Api.isAdmin) {
-      _sub = Api.accountsStream().skip(1).listen((_) {
+      _sub = Api.accountsStream().listen((rows) {
+        setState(() => _credits = {for (final r in rows) '${r['user_id']}': (r['credits'] as num?)?.toInt() ?? 0});
+        if (_first) {
+          _first = false;
+          return;
+        }
         _debounce?.cancel();
         _debounce = Timer(const Duration(milliseconds: 600), () {
           if (mounted) _reload();
@@ -123,7 +131,15 @@ class _UsersScreenState extends State<UsersScreen> {
                           'Anyone can sign up; they verify their email and agree to the privacy notice first.',
                           style: theme.textTheme.bodySmall),
                       const SizedBox(height: 12),
-                      for (final u in active) _UserCard(user: u, onUpdate: _update, onStatus: _setStatus),
+                      for (final u in active)
+                        _UserCard(
+                          user: u,
+                          credits: _credits['${u['user_id']}'],
+                          onUpdate: _update,
+                          onStatus: _setStatus,
+                          onCredits: () => adjustCredits(context,
+                              userId: '${u['user_id']}', email: '${u['email']}', current: _credits['${u['user_id']}'] ?? 0),
+                        ),
                       if (blocked.isNotEmpty)
                         Card(
                           clipBehavior: Clip.antiAlias,
@@ -155,8 +171,10 @@ String _name(Map<String, dynamic> u) {
 typedef _StatusAction = Future<void> Function(Map<String, dynamic>, String);
 
 class _UserCard extends StatelessWidget {
-  const _UserCard({required this.user, required this.onUpdate, required this.onStatus});
+  const _UserCard({required this.user, required this.onUpdate, required this.onStatus, this.credits, required this.onCredits});
   final Map<String, dynamic> user;
+  final int? credits;
+  final VoidCallback onCredits;
   final Future<void> Function(Map<String, dynamic>, {bool? enabled, int? calls}) onUpdate;
   final _StatusAction onStatus;
 
@@ -184,6 +202,12 @@ class _UserCard extends StatelessWidget {
             Icon(u['enabled'] == true ? Icons.person : Icons.person_off, color: u['enabled'] == true ? null : Colors.grey),
             const SizedBox(width: 8),
             Expanded(child: Text('${u['email']}', style: theme.textTheme.titleMedium)),
+            ActionChip(
+              avatar: const Icon(Icons.toll_outlined, size: 16),
+              label: Text(credits == null ? 'Credits' : '$credits credits'),
+              onPressed: onCredits,
+            ),
+            const SizedBox(width: 6),
             Text('${(u['storage_mb'] as num?) ?? 0} MB', style: theme.textTheme.bodySmall),
             if (u['email'] != Api.currentEmail)
               PopupMenuButton<String>(

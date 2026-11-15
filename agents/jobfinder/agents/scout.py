@@ -135,6 +135,10 @@ def run(run: db.PipelineRun, settings: dict, profile: dict, profile_brief: str, 
         except Exception:
             continue  # logged by run.agent
         run.scanned += len(raw)
+        try:
+            db.upsert_postings(raw)  # everything fetched goes on the shared Jobs board
+        except Exception as exc:
+            log.warning("could not add postings to the board: %s", exc)
         keep = _evaluate(run, raw, fps, settings, profile, profile_brief, roles, context, threshold)
         for job, score, why in sorted(keep, key=lambda x: -x[1]):
             if limit is not None and stored >= limit:

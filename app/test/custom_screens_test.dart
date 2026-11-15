@@ -30,14 +30,15 @@ void main() {
     expect(tester.takeException(), isNull);
   });
 
-  testWidgets('six tabs fit on a phone and the custom pages highlight Custom', (tester) async {
+  testWidgets('tabs fit on a phone, and custom jobs and the builder highlight Create', (tester) async {
     await phone(tester);
-    await tester.pumpWidget(const MaterialApp(home: AppShell(location: '/custom/JF-20261114-ABCDE', child: SizedBox())));
-    for (final label in ['Home', 'Jobs', 'Custom', 'Resume', 'Agents', 'Settings']) {
-      expect(find.text(label), findsOneWidget);
+    for (final (location, index) in [('/custom/JF-20261114-ABCDE', 2), ('/resume-builder/cv/x', 2), ('/guide', 4), ('/', 0)]) {
+      await tester.pumpWidget(MaterialApp(home: AppShell(location: location, child: const SizedBox())));
+      for (final label in ['Home', 'Jobs', 'Create', 'Agents', 'Settings']) {
+        expect(find.text(label), findsOneWidget);
+      }
+      expect(tester.widget<NavigationBar>(find.byType(NavigationBar)).selectedIndex, index, reason: location);
     }
-    final bar = tester.widget<NavigationBar>(find.byType(NavigationBar));
-    expect(bar.selectedIndex, 2);
     expect(tester.takeException(), isNull);
   });
 

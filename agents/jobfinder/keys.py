@@ -171,9 +171,9 @@ def shared_keys(store: KeyStateStore) -> dict[str, list[Key]]:
 
 
 def build_pools(account: dict, user_keys: list[dict], store: KeyStateStore, shared: dict[str, list[Key]]) -> dict[str, KeyPool]:
-    """Own keys first, then the shared pool if allowed."""
+    """Own keys first (only older accounts have any), then the shared pool, which everyone gets since migration 011."""
     own = sorted(user_keys, key=lambda r: (r.get("priority") or 0, r.get("created_at") or ""))
-    use_shared = account.get("use_shared_keys", False)
+    use_shared = True
 
     def pool(provider):
         mine = [Key(provider, r["key_value"], r.get("app_id"), r["id"], r.get("label") or "") for r in own if r["provider"] == provider]

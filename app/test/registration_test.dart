@@ -24,28 +24,15 @@ void main() {
     }
   });
 
-  test('phone is normalised to digits with an optional +', () {
-    expect(normalizePhone('+91 98765-43210'), '+919876543210');
-    expect(normalizePhone('(555) 123 4567'), '5551234567');
-    expect(normalizePhone('12345'), isNull);
-    expect(normalizePhone('+1 555 CALL NOW'), isNull);
-    expect(normalizePhone('1234567890123456'), isNull);
-    expect(validatePhone(''), isNotNull);
+  test('metadata carries just the name', () {
+    const r = Registration(firstName: 'A', lastName: 'B', email: 'a@b.co', password: 'x');
+    expect(r.metadata, {'first_name': 'A', 'last_name': 'B'});
   });
 
-  test('metadata only carries a platform when the app is wanted', () {
-    const yes = Registration(firstName: 'A', lastName: 'B', email: 'a@b.co', phone: '+1555123456', password: 'x',
-        wantsMobileApp: true, mobilePlatform: 'android');
-    const no = Registration(firstName: 'A', lastName: 'B', email: 'a@b.co', phone: '+1555123456', password: 'x',
-        wantsMobileApp: false, mobilePlatform: 'ios');
-    expect(yes.metadata['mobile_platform'], 'android');
-    expect(no.metadata.containsKey('mobile_platform'), isFalse);
-  });
-
-  test('access status: rows before migration 008 count as approved', () {
-    expect(accessStatus(null), 'pending');
+  test('access status: only blocked accounts are kept out', () {
+    expect(accessStatus(null), 'approved');
     expect(accessStatus({'user_id': 'x'}), 'approved');
-    expect(accessStatus({'status': 'pending'}), 'pending');
+    expect(accessStatus({'status': 'approved'}), 'approved');
     expect(accessStatus({'status': 'rejected'}), 'rejected');
   });
 
@@ -61,42 +48,31 @@ void main() {
     return sent;
   }
 
-  testWidgets('form blocks bad input and asks about the mobile app', (tester) async {
+  testWidgets('form blocks bad input', (tester) async {
     final sent = await pump(tester);
     await tester.enterText(find.byKey(const Key('first_name')), 'R2D2');
     await tester.enterText(find.byKey(const Key('email')), 'not-an-email');
+    await tester.enterText(find.byKey(const Key('password')), 'short');
     await tester.tap(find.byKey(const Key('register')));
     await tester.pump();
     expect(find.text('Letters only: no spaces, numbers or symbols'), findsOneWidget);
     expect(find.text('Enter a valid email, e.g. name@example.com'), findsOneWidget);
-    expect(find.text('Choose yes or no'), findsOneWidget);
+    expect(find.text('Use at least 8 characters'), findsOneWidget);
+    expect(find.byKey(const Key('phone')), findsNothing);
     expect(sent, isEmpty);
-
-    // the platform question only appears after "Yes", and is then required
-    expect(find.byKey(const Key('ios')), findsNothing);
-    await tester.tap(find.byKey(const Key('app_yes')));
-    await tester.pump();
-    expect(find.byKey(const Key('ios')), findsOneWidget);
-    expect(find.text('Choose iPhone or Android'), findsOneWidget);
   });
 
-  testWidgets('valid form submits normalised values', (tester) async {
+  testWidgets('valid form submits trimmed values', (tester) async {
     final sent = await pump(tester);
     await tester.enterText(find.byKey(const Key('first_name')), ' Raj ');
     await tester.enterText(find.byKey(const Key('last_name')), 'Kumar');
     await tester.enterText(find.byKey(const Key('email')), 'raj@example.com');
-    await tester.enterText(find.byKey(const Key('phone')), '+91 98765 43210');
     await tester.enterText(find.byKey(const Key('password')), 'secret123');
     await tester.enterText(find.byKey(const Key('confirm')), 'secret123');
-    await tester.tap(find.byKey(const Key('app_yes')));
-    await tester.pump();
-    await tester.tap(find.byKey(const Key('android')));
-    await tester.pump();
     await tester.tap(find.byKey(const Key('register')));
     await tester.pumpAndSettle();
     expect(sent, hasLength(1));
     final r = sent.single;
-    expect([r.firstName, r.lastName, r.email, r.phone, r.wantsMobileApp, r.mobilePlatform],
-        ['Raj', 'Kumar', 'raj@example.com', '+919876543210', true, 'android']);
+    expect([r.firstName, r.lastName, r.email, r.password], ['Raj', 'Kumar', 'raj@example.com', 'secret123']);
   });
 }

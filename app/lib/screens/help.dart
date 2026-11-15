@@ -7,13 +7,13 @@ import '../widgets/common.dart';
 
 const _help = r'''
 ## Getting started
+The **Setup guide** (Settings > the book icon) walks through these steps:
 1. **Settings > Parent documents:** upload your resume as a **Word file (.docx)** - the agents edit a copy of it for
-   every job - plus the PDF and your master cover letter.
-2. **Settings > API keys > Add API key > Gemini:** a free key from Google AI Studio. The dialog explains how and can
-   test it. Without an AI key your agents can't run.
-3. **Settings > Locations and Target roles:** where and what to look for (leave roles empty to use your resume's titles).
-4. Optional: **Adzuna / JSearch** keys for more job sources, **Groq** for faster rating, and **Job boards** with the
-   careers pages of companies you like.
+   every job - plus the PDF and your master cover letter. No resume yet? Build one under **Create**.
+2. **Settings > Locations and Target roles:** where and what to look for (leave roles empty to use your resume's titles).
+3. Optional: **Job boards** with the careers pages of companies you like.
+
+You don't need any API keys: Pounce's own keys do the AI work.
 
 ## How a run works
 The agents run every hour. Each run works in **batches** of up to 20 jobs (Settings > Jobs per batch):
@@ -29,20 +29,21 @@ batch takes several hours.
 - **Home** - totals, what's running now, the current batch.
 - **Jobs** - grouped by batch and sorted by rank. Tap a job for details, **Apply** (pick the tailored or your own
   resume) and **Prepare for interview**. Mark jobs **Applied**, or **Delete** them.
-- **Custom** - for jobs you found yourself. Paste the title and description (plus the company and link if you
-  have them), give it a batch number, and press **Process now**. You get the same scores, tailored resume, cover
-  letter and interview prep, but only when you ask, and these jobs never show up in your regular batches.
-- **Resume** - build a CV in UK careers-service style: answer questions and let the AI write it, use your own
-  words as typed, or start from your current resume. Review each section (regenerate, edit or keep your words), then
-  download Word or PDF and, if you like, make it your master resume. It also writes cover letters from your resume.
-  The builder's AI uses your own key and allows 60 requests a day.
+- **Create** - two things in one place:
+  - **Add a custom job** you found yourself: paste the title and description (plus the company and link if you
+    have them), give it a batch number, and press **Process now**. These jobs never show up in your regular batches.
+  - **Build a CV or cover letter** in UK careers-service style: answer questions and let the AI write it, use your
+    own words as typed, or start from your current resume. Review each section (regenerate, edit or keep your
+    words), then download Word or PDF and, if you like, make it your master resume. The builder allows 20 AI
+    requests a day.
 - **Agents** - every agent task and each run's log, including why something failed.
-- **Settings** - documents, API keys, where and what to search, and tuning.
+- **Settings** - appearance (light or dark, colour theme), documents, where and what to search, tuning, and your
+  account: privacy and AI, password, sign out and **Delete my account**.
 
 ## Limits and common messages
 | In the log | What it means |
 |---|---|
-| *No AI provider key available* | Add a Gemini key in Settings > API keys. |
+| *No AI provider key available* | Pounce's keys are all busy or used up; work continues on the next run. |
 | *No parent resume uploaded yet* | Upload your resume (.docx) in Settings. |
 | *rejected a request … 429* | The free per-minute limit - the agents slow down automatically. |
 | *daily free-tier limit reached* | That key/model is used up until tomorrow; other models take over. |
@@ -53,8 +54,9 @@ batch takes several hours.
 
 ## Your data
 Only you see your jobs and documents in the app; the admin who runs Pounce owns the database. Your resume and job
-descriptions are sent to the AI provider of your key. Delete jobs any time; jobs never marked **Applied** are deleted
-automatically after **30 days** (except the ones on the Custom page), and deleted jobs don't come back.
+descriptions are sent to Google Gemini, with Groq and OpenRouter as backups (Settings > Account > Privacy and AI).
+Delete jobs any time; jobs never marked **Applied** are deleted automatically after **30 days** (except the ones on
+the Custom page), and deleted jobs don't come back. **Delete my account** in Settings removes everything at once.
 
 ## FAQ
 - **No jobs yet?** Check the Getting started card on Home, then Agents > Runs for the latest run's note.

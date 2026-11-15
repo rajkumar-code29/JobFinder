@@ -12,7 +12,7 @@ import {
   SECTION_GUIDE, TARGETS,
 } from "./prompts.ts";
 
-const DAILY_LIMIT = Number(Deno.env.get("BUILDER_DAILY_LIMIT") ?? "60");
+const DAILY_LIMIT = Number(Deno.env.get("BUILDER_DAILY_LIMIT") ?? "20");
 
 const CORS = {
   "Access-Control-Allow-Origin": "*",
@@ -99,7 +99,7 @@ Deno.serve(async (req) => {
   if (authError || !auth?.user) return reply(401, { error: "Please sign in again" });
   const uid = auth.user.id;
 
-  const { data: account } = await db.from("accounts").select("status,enabled,use_shared_keys")
+  const { data: account } = await db.from("accounts").select("status,enabled")
     .eq("user_id", uid).maybeSingle();
   if (!account || (account.status ?? "approved") !== "approved") {
     return reply(403, { error: "Your account needs to be approved first" });
@@ -124,7 +124,7 @@ Deno.serve(async (req) => {
     });
   }
 
-  const keys = await loadKeys(db, uid, !!account.use_shared_keys);
+  const keys = await loadKeys(db, uid, true); // everyone gets the shared keys since migration 011
   const ctx: Ctx = { db, uid, keys, chain: await loadChain(db), body };
   try {
     const result = await action(ctx);

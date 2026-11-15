@@ -5,6 +5,7 @@ import 'package:go_router/go_router.dart';
 
 import '../api.dart';
 import '../models.dart';
+import '../theme.dart';
 import '../widgets/common.dart';
 import '../widgets/onboarding.dart';
 import 'agents.dart';
@@ -70,7 +71,8 @@ class _HomeScreenState extends State<HomeScreen> {
         child: ListView(padding: const EdgeInsets.all(16), children: [
           PageBody(
             child: Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
-              if (Api.isAdmin) const _PendingApprovalsCard(),
+              _Hero(stats: s),
+              const SizedBox(height: 16),
               const GettingStartedCard(),
               const AgentControlCard(),
               const _CurrentBatchCard(),
@@ -110,19 +112,67 @@ class _HomeScreenState extends State<HomeScreen> {
   }
 }
 
+/// Greeting in the theme's colours with the numbers that matter and quick links.
+class _Hero extends StatefulWidget {
+  const _Hero({required this.stats});
+  final Stats? stats;
+
+  @override
+  State<_Hero> createState() => _HeroState();
+}
+
+class _HeroState extends State<_Hero> {
+  late final Future<Map<String, dynamic>?> _account = Api.account().catchError((_) => null);
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final on = theme.colorScheme.onPrimaryContainer;
+    final s = widget.stats;
+    return FutureBuilder<Map<String, dynamic>?>(
+      future: _account,
+      builder: (context, snap) {
+        final name = snap.data?['first_name'] as String?;
+        final hour = DateTime.now().hour;
+        final hello = hour < 12 ? 'Good morning' : hour < 18 ? 'Good afternoon' : 'Good evening';
+        return Container(
+          padding: const EdgeInsets.fromLTRB(20, 20, 20, 16),
+          decoration: BoxDecoration(gradient: brandGradient(theme.colorScheme), borderRadius: BorderRadius.circular(22)),
+          child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+            Text(name == null ? hello : '$hello, $name', style: theme.textTheme.headlineSmall?.copyWith(color: on)),
+            const SizedBox(height: 4),
+            Text(
+              s == null
+                  ? 'Your agents are looking for jobs that fit you.'
+                  : '${s.ready} ready to apply · ${s.totalMatched} matched to your resume · ${s.applied} applied',
+              style: theme.textTheme.bodyMedium?.copyWith(color: on),
+            ),
+            const SizedBox(height: 12),
+            Wrap(spacing: 8, runSpacing: 8, children: [
+              FilledButton.icon(onPressed: () => context.go('/jobs'), icon: const Icon(Icons.work_outline), label: const Text('Browse jobs')),
+              FilledButton.tonalIcon(onPressed: () => context.go('/create'), icon: const Icon(Icons.add), label: const Text('Create')),
+            ]),
+          ]),
+        );
+      },
+    );
+  }
+}
+
 class _StatGrid extends StatelessWidget {
   const _StatGrid({required this.stats});
   final Stats stats;
 
   @override
   Widget build(BuildContext context) {
+    final scheme = Theme.of(context).colorScheme;
     final tiles = [
-      (Icons.manage_search, 'Jobs scanned', '${stats.totalScanned}', null, Colors.blue),
-      (Icons.filter_alt_outlined, 'Matched to resume', '${stats.totalMatched}', '/jobs', Colors.indigo),
-      (Icons.task_alt, 'Ready to apply', '${stats.ready}', '/jobs?status=ready', Colors.teal),
-      (Icons.send_outlined, 'Applied', '${stats.applied}', '/jobs?status=applied', Colors.green),
-      (Icons.error_outline, 'Errors (24h / all)', '${stats.errors24h} / ${stats.totalErrors}', '/agents?errors=1', Colors.red),
-      (Icons.smart_toy_outlined, 'Agents working', '${stats.agentsRunning}', '/agents', Colors.deepPurple),
+      (Icons.manage_search, 'Jobs scanned', '${stats.totalScanned}', null, scheme.primary),
+      (Icons.filter_alt_outlined, 'Matched to resume', '${stats.totalMatched}', '/jobs', scheme.secondary),
+      (Icons.task_alt, 'Ready to apply', '${stats.ready}', '/jobs?status=ready', scheme.tertiary),
+      (Icons.send_outlined, 'Applied', '${stats.applied}', '/jobs?status=applied', Colors.green.shade600),
+      (Icons.error_outline, 'Errors (24h / all)', '${stats.errors24h} / ${stats.totalErrors}', '/agents?errors=1', scheme.error),
+      (Icons.smart_toy_outlined, 'Agents working', '${stats.agentsRunning}', '/agents', scheme.primary),
     ];
     return LayoutBuilder(builder: (context, c) {
       final cols = c.maxWidth > 900 ? 6 : c.maxWidth > 560 ? 3 : 2;
@@ -142,7 +192,11 @@ class _StatGrid extends StatelessWidget {
                 child: Padding(
                   padding: const EdgeInsets.all(14),
                   child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-                    Icon(icon, color: color),
+                    Container(
+                      padding: const EdgeInsets.all(8),
+                      decoration: BoxDecoration(color: color.withValues(alpha: 0.14), borderRadius: BorderRadius.circular(12)),
+                      child: Icon(icon, color: color, size: 22),
+                    ),
                     const Spacer(),
                     FittedBox(
                       child: Text(value,
@@ -231,40 +285,6 @@ class AgentControlCard extends StatelessWidget {
 }
 
 /// Admin: people who registered and are waiting for approval (live).
-class _PendingApprovalsCard extends StatefulWidget {
-  const _PendingApprovalsCard();
-
-  @override
-  State<_PendingApprovalsCard> createState() => _PendingApprovalsCardState();
-}
-
-class _PendingApprovalsCardState extends State<_PendingApprovalsCard> {
-  late final Stream<List<Map<String, dynamic>>> _stream = Api.accountsStream();
-
-  @override
-  Widget build(BuildContext context) => StreamBuilder<List<Map<String, dynamic>>>(
-        stream: _stream,
-        builder: (context, snap) {
-          final pending = (snap.data ?? []).where((a) => a['status'] == 'pending').toList();
-          if (pending.isEmpty) return const SizedBox.shrink();
-          final names = pending.map((a) => a['first_name'] as String?).whereType<String>().take(3).join(', ');
-          return Padding(
-            padding: const EdgeInsets.only(bottom: 16),
-            child: Card(
-              color: Theme.of(context).colorScheme.primaryContainer.withValues(alpha: 0.5),
-              child: ListTile(
-                leading: Badge(label: Text('${pending.length}'), child: const Icon(Icons.person_add_alt_1, size: 30)),
-                title: Text(pending.length == 1 ? '1 person is waiting for approval' : '${pending.length} people are waiting for approval'),
-                subtitle: names.isEmpty ? null : Text(names),
-                trailing: const Icon(Icons.chevron_right),
-                onTap: () => context.push('/admin/users'),
-              ),
-            ),
-          );
-        },
-      );
-}
-
 class _CurrentBatchCard extends StatelessWidget {
   const _CurrentBatchCard();
 

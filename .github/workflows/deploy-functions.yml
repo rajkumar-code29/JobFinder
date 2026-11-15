@@ -41,8 +41,11 @@ jobs:
       - uses: supabase/setup-cli@v1
         with:
           version: 2.122.1   # pinned: CLI 3.x came out on 2026-11-02, untested here
-      - name: Deploy resume-ai
+      - name: Deploy
         env:
           SUPABASE_ACCESS_TOKEN: ${{ secrets.SUPABASE_ACCESS_TOKEN }}
-        # the function checks the user itself (needed with the new API keys)
-        run: supabase functions deploy resume-ai --project-ref "$PROJECT_REF" --no-verify-jwt
+        # each function checks the user itself (needed with the new API keys)
+        run: |
+          for fn in resume-ai account; do
+            supabase functions deploy "$fn" --project-ref "$PROJECT_REF" --no-verify-jwt
+          done

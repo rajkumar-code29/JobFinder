@@ -7,6 +7,7 @@ import 'package:url_launcher/url_launcher.dart';
 import 'config.dart';
 import 'models.dart';
 import 'registration.dart';
+import 'screens/privacy_info.dart' show privacyVersion;
 
 SupabaseClient get supa => Supabase.instance.client;
 
@@ -222,35 +223,41 @@ class Api {
           {'user_id': uid, 'job_id': jobId, 'agent': agent, 'model': model, 'rating': rating});
 
   // onboarding
-  static Future<void> acceptPrivacy() => supa.rpc('accept_privacy');
+  static Future<void> acceptPrivacy() => supa.rpc('accept_privacy', params: {'p_version': privacyVersion});
+
+  static Future<void> resendVerification(String email) =>
+      supa.auth.resend(type: OtpType.signup, email: email, emailRedirectTo: kIsWeb ? Uri.base.origin : null);
+
+  /// Deletes the account and everything in it (the account Edge Function), then signs out.
+  static Future<void> deleteAccount() async {
+    try {
+      await supa.functions.invoke('account', body: {'action': 'delete', 'confirm': 'DELETE'});
+    } on FunctionException catch (e) {
+      final details = e.details;
+      throw details is Map && details['error'] != null ? '${details['error']}' : 'Couldn\'t delete the account (${e.status})';
+    }
+    await supa.auth.signOut();
+  }
 
   /// What's still missing for the agents to run.
   static Future<SetupStatus> setupStatus() async {
     final results = await Future.wait([
       parentFiles('resume'),
-      apiKeys(),
-      account(),
       settings(),
       profile(),
       supa.from('pipeline_runs').select('started_at,log').eq('user_id', uid).order('started_at', ascending: false).limit(1),
     ]);
     final resume = results[0] as List<String>;
-    final keys = results[1] as List<Map<String, dynamic>>;
-    final acct = results[2] as Map<String, dynamic>?;
-    final prefs = results[3] as Map<String, dynamic>;
-    final prof = results[4] as Map<String, dynamic>;
-    final runs = results[5] as List;
+    final prefs = results[1] as Map<String, dynamic>;
+    final prof = results[2] as Map<String, dynamic>;
+    final runs = results[3] as List;
     final log = runs.isEmpty ? '' : '${(runs.first as Map)['log'] ?? ''}';
     final waiting = log.split('\n').where((l) => l.contains('Skipping this user')).map((l) => l.replaceFirst(RegExp(r'^\S+ '), '')).firstOrNull;
     return SetupStatus(
       resumeDocx: resume.any((f) => f.toLowerCase().endsWith('.docx')),
-      aiKey: keys.any((k) => const {'gemini', 'groq', 'openrouter'}.contains(k['provider'])) || acct?['use_shared_keys'] == true,
-      geminiKey: keys.any((k) => k['provider'] == 'gemini') || acct?['use_shared_keys'] == true,
       locations: ((prefs['countries'] as List?) ?? []).isNotEmpty,
       roles: ((prefs['target_roles'] as List?) ?? []).isNotEmpty || ((prof['titles'] as List?) ?? []).isNotEmpty,
       jobBoards: ((prefs['job_boards'] as List?) ?? []).isNotEmpty,
-      extraKeys: keys.any((k) => const {'adzuna', 'rapidapi', 'groq'}.contains(k['provider'])),
-      privacyAccepted: acct?['privacy_accepted_at'] != null,
       hasRun: runs.isNotEmpty,
       waitingOn: waiting,
     );

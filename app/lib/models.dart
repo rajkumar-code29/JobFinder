@@ -80,22 +80,18 @@ class Batch {
 class SetupStatus {
   const SetupStatus({
     required this.resumeDocx,
-    required this.aiKey,
-    required this.geminiKey,
     required this.locations,
     required this.roles,
     required this.jobBoards,
-    required this.extraKeys,
-    required this.privacyAccepted,
     required this.hasRun,
     this.waitingOn,
   });
-  final bool resumeDocx, aiKey, geminiKey, locations, roles, jobBoards, extraKeys, privacyAccepted, hasRun;
+  final bool resumeDocx, locations, roles, jobBoards, hasRun;
 
   /// "Skipping this user" note from the last run, if any
   final String? waitingOn;
 
-  bool get ready => resumeDocx && aiKey && locations && roles;
+  bool get ready => resumeDocx && locations && roles;
 }
 
 class AgentControl {

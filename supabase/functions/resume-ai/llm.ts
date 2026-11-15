@@ -1,5 +1,5 @@
-// AI calls for the resume builder: the user's own keys first, then shared keys with a value (only if an admin
-// switched shared keys on for them). Tries each model in the chain with each key, like the agents do.
+// AI calls for the resume builder: the user's own keys first (older accounts), then shared keys that have a value.
+// Tries each model in the chain with each key, like the agents do.
 import type { SupabaseClient } from "npm:@supabase/supabase-js@2.45.4";
 
 export class BuilderError extends Error {
@@ -190,8 +190,8 @@ export async function askJson(keys: Key[], chain: string[], system: string, prom
   const usable = pdf ? keys.filter((k) => k.provider === "gemini") : keys;
   if (!usable.length) {
     throw new BuilderError(pdf
-      ? "Reading a PDF needs a Gemini key. Add one in Settings > API keys, or upload the resume as a .docx"
-      : "Add an AI key (Gemini, Groq or OpenRouter) in Settings > API keys first", 400, "no_key");
+      ? "Reading a PDF isn't available right now. Upload the resume as a .docx instead"
+      : "The AI isn't available right now. Try again later", 503, "no_key");
   }
   const deadline = Date.now() + 130_000;
   const problems: string[] = [];

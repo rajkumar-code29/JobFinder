@@ -8,8 +8,10 @@ import 'package:supabase_flutter/supabase_flutter.dart';
 import 'auth_links.dart';
 import 'config.dart';
 import 'screens/agents.dart';
+import 'screens/create.dart';
 import 'screens/custom.dart';
 import 'screens/cv_builder.dart';
+import 'screens/guide.dart';
 import 'screens/help.dart';
 import 'screens/home.dart';
 import 'screens/interview.dart';
@@ -18,11 +20,13 @@ import 'screens/jobs.dart';
 import 'screens/letter_builder.dart';
 import 'screens/login.dart';
 import 'screens/models.dart';
+import 'screens/privacy_info.dart';
 import 'screens/register.dart';
 import 'screens/resume_builder.dart';
 import 'screens/set_password.dart';
 import 'screens/settings.dart';
 import 'screens/users.dart';
+import 'theme.dart';
 import 'widgets/access_gate.dart';
 import 'widgets/shell.dart';
 
@@ -34,6 +38,7 @@ Future<void> main() async {
     return;
   }
   AuthLinks.captureInitialUrl();
+  await ThemeController.load();
   await Supabase.initialize(
     url: AppConfig.supabaseUrl,
     publishableKey: AppConfig.supabaseAnonKey,
@@ -140,35 +145,29 @@ class JobFinderApp extends StatelessWidget {
           ),
           GoRoute(path: '/settings', builder: (_, _) => const SettingsScreen()),
           GoRoute(path: '/help', builder: (_, _) => const HelpScreen()),
+          GoRoute(path: '/guide', builder: (_, _) => const GuideScreen()),
+          GoRoute(path: '/privacy-info', builder: (_, _) => const PrivacyScreen()),
+          GoRoute(path: '/create', builder: (_, _) => const CreateScreen()),
           GoRoute(path: '/admin/users', builder: (_, _) => const UsersScreen()),
         ],
       ),
     ],
   );
 
-  ThemeData _theme(Brightness b) {
-    final scheme = ColorScheme.fromSeed(seedColor: const Color(0xFF3B5BDB), brightness: b);
-    return ThemeData(
-      colorScheme: scheme,
-      useMaterial3: true,
-      cardTheme: CardThemeData(
-        elevation: 0,
-        shape: RoundedRectangleBorder(
-          borderRadius: BorderRadius.circular(14),
-          side: BorderSide(color: scheme.outlineVariant),
-        ),
-        margin: EdgeInsets.zero,
-      ),
-    );
-  }
-
   @override
-  Widget build(BuildContext context) => MaterialApp.router(
-        title: 'Pounce',
-        debugShowCheckedModeBanner: false,
-        theme: _theme(Brightness.light),
-        darkTheme: _theme(Brightness.dark),
-        routerConfig: _router,
+  Widget build(BuildContext context) => ListenableBuilder(
+        listenable: ThemeController.instance,
+        builder: (context, _) {
+          final t = ThemeController.instance;
+          return MaterialApp.router(
+            title: 'Pounce',
+            debugShowCheckedModeBanner: false,
+            themeMode: t.mode,
+            theme: buildTheme(t.palette, Brightness.light),
+            darkTheme: buildTheme(t.palette, Brightness.dark),
+            routerConfig: _router,
+          );
+        },
       );
 }
 

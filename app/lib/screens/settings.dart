@@ -11,6 +11,7 @@ import '../api.dart';
 import '../boards.dart';
 import '../key_guides.dart';
 import '../countries.dart';
+import '../theme.dart';
 import '../widgets/common.dart';
 
 const sourceInfo = {
@@ -79,19 +80,10 @@ class _SettingsScreenState extends State<SettingsScreen> {
     final s = _s;
     return Scaffold(
       appBar: AppBar(title: const Text('Settings'), actions: [
+        IconButton(tooltip: 'Setup guide', icon: const Icon(Icons.menu_book_outlined), onPressed: () => context.push('/guide')),
         IconButton(tooltip: 'How it works', icon: const Icon(Icons.help_outline), onPressed: () => context.push('/help')),
         if (Api.isAdmin)
           IconButton(tooltip: 'Users (admin)', icon: const Icon(Icons.group_outlined), onPressed: () => context.push('/admin/users')),
-        IconButton(
-          tooltip: 'Change password',
-          icon: const Icon(Icons.password),
-          onPressed: () => context.push('/set-password'),
-        ),
-        IconButton(
-          tooltip: 'Sign out',
-          icon: const Icon(Icons.logout),
-          onPressed: () => Supabase.instance.client.auth.signOut(),
-        ),
       ]),
       floatingActionButton: _dirty
           ? FloatingActionButton.extended(
@@ -108,9 +100,9 @@ class _SettingsScreenState extends State<SettingsScreen> {
               PageBody(
                 maxWidth: 860,
                 child: Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
+                  const _Appearance(),
                   const _ParentDocs(),
                   if (Api.isAdmin) const _SharedKeys(),
-                  const _ApiKeys(),
                   _Section(
                     title: 'Locations',
                     subtitle: 'Countries, or any city/region you type (custom locations are searched via Google)',
@@ -209,6 +201,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
                       ),
                     ]),
                   ),
+                  const _AccountSection(),
                 ]),
               ),
             ]),
@@ -470,136 +463,6 @@ const providerInfo = {
 };
 
 /// The user's own keys, tried in order.
-class _ApiKeys extends StatefulWidget {
-  const _ApiKeys();
-
-  @override
-  State<_ApiKeys> createState() => _ApiKeysState();
-}
-
-class _ApiKeysState extends State<_ApiKeys> {
-  late Future<(List<Map<String, dynamic>>, Map<String, dynamic>?)> _future = _load();
-
-  Future<(List<Map<String, dynamic>>, Map<String, dynamic>?)> _load() async =>
-      (await Api.apiKeys(), await Api.account());
-
-  void _reload() => setState(() => _future = _load());
-
-  Future<void> _add(List<Map<String, dynamic>> existing) async {
-    final added = await showDialog<bool>(
-      context: context,
-      builder: (_) => _AddKeyDialog(existing: existing),
-    );
-    if (added == true) _reload();
-  }
-
-  Future<void> _delete(Map<String, dynamic> k) async {
-    final ok = await showDialog<bool>(
-      context: context,
-      builder: (ctx) => AlertDialog(
-        title: const Text('Remove this key?'),
-        content: Text('${providerInfo[k['provider']]?.$1 ?? k['provider']} ${k['label']} ${k['hint']}'),
-        actions: [
-          TextButton(onPressed: () => Navigator.pop(ctx, false), child: const Text('Cancel')),
-          FilledButton(onPressed: () => Navigator.pop(ctx, true), child: const Text('Remove')),
-        ],
-      ),
-    );
-    if (ok != true) return;
-    try {
-      await Api.deleteApiKey(k['id'] as String);
-      _reload();
-    } catch (e) {
-      if (mounted) toast(context, 'Could not remove key: $e');
-    }
-  }
-
-  @override
-  Widget build(BuildContext context) => _Section(
-        title: 'API keys',
-        subtitle: 'Your own keys, tried top to bottom. When one hits its free limit the agents switch to the next one '
-            'and retry the used-up key after it resets. Keys can\'t be viewed again after saving.',
-        child: FutureBuilder<(List<Map<String, dynamic>>, Map<String, dynamic>?)>(
-          future: _future,
-          builder: (context, snap) {
-            if (snap.hasError) return Text('${snap.error}');
-            if (!snap.hasData) return const LinearProgressIndicator();
-            final (keys, account) = snap.data!;
-            final theme = Theme.of(context);
-            final shared = account?['use_shared_keys'] == true;
-            return Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
-              Container(
-                padding: const EdgeInsets.all(10),
-                decoration: BoxDecoration(
-                  color: theme.colorScheme.surfaceContainerHighest,
-                  borderRadius: BorderRadius.circular(8),
-                ),
-                child: Text(
-                  '${shared ? 'After your own keys, the shared keys are used as a last fallback.' : 'Only your own keys are used - add at least one Gemini key.'}'
-                  '  Limit: ${account?['llm_calls_per_run'] ?? '-'} Gemini calls per hourly run.',
-                  style: theme.textTheme.bodySmall,
-                ),
-              ),
-              const SizedBox(height: 8),
-              for (final entry in providerInfo.entries) ...[
-                Padding(
-                  padding: const EdgeInsets.only(top: 8),
-                  child: Row(children: [
-                    Icon(entry.value.$3, size: 18),
-                    const SizedBox(width: 6),
-                    Text(entry.value.$1, style: theme.textTheme.labelLarge),
-                  ]),
-                ),
-                if (!keys.any((k) => k['provider'] == entry.key))
-                  Padding(
-                    padding: const EdgeInsets.only(left: 24, top: 4),
-                    child: Text(shared ? 'No own keys - using shared keys' : 'No keys', style: theme.textTheme.bodySmall),
-                  ),
-                for (final (i, k) in keys.where((k) => k['provider'] == entry.key).indexed) _KeyTile(index: i + 1, data: k, onDelete: () => _delete(k)),
-              ],
-              const SizedBox(height: 12),
-              Align(
-                alignment: Alignment.centerLeft,
-                child: FilledButton.tonalIcon(
-                  onPressed: () => _add(keys),
-                  icon: const Icon(Icons.add),
-                  label: const Text('Add API key'),
-                ),
-              ),
-            ]);
-          },
-        ),
-      );
-}
-
-class _KeyTile extends StatelessWidget {
-  const _KeyTile({required this.index, required this.data, required this.onDelete});
-  final int index;
-  final Map<String, dynamic> data;
-  final VoidCallback onDelete;
-
-  @override
-  Widget build(BuildContext context) {
-    final until = data['exhausted_until'] == null ? null : DateTime.parse(data['exhausted_until'] as String).toLocal();
-    final parked = until != null && until.isAfter(DateTime.now());
-    final used = data['last_used_at'] == null ? null : DateTime.parse(data['last_used_at'] as String).toLocal();
-    final (color, status) = parked
-        ? (Colors.orange, 'Limit reached · retried after ${DateFormat.MMMd().add_jm().format(until)}')
-        : data['last_error'] != null
-            ? (Colors.red, '${data['last_error']}')
-            : (Colors.green, used == null ? 'Not used yet' : 'Working · last used ${ago(used)}');
-    final label = (data['label'] as String?)?.isNotEmpty == true ? data['label'] as String : 'Key $index';
-    return ListTile(
-      contentPadding: const EdgeInsets.only(left: 24),
-      dense: true,
-      leading: CircleAvatar(radius: 12, child: Text('$index', style: const TextStyle(fontSize: 11))),
-      title: Text('$label  ${data['hint']}${data['app_id'] != null ? '  (app ${data['app_id']})' : ''}'),
-      subtitle: Text(status, style: TextStyle(color: color), maxLines: 2, overflow: TextOverflow.ellipsis),
-      trailing: IconButton(icon: const Icon(Icons.delete_outline), tooltip: 'Remove', onPressed: onDelete),
-    );
-  }
-}
-
 class _AddKeyDialog extends StatefulWidget {
   const _AddKeyDialog({required this.existing, this.shared = false});
   final List<Map<String, dynamic>> existing;
@@ -1012,6 +875,182 @@ class _SharedKeyTile extends StatelessWidget {
           ),
         ],
       ),
+    );
+  }
+}
+
+
+class _Appearance extends StatelessWidget {
+  const _Appearance();
+
+  @override
+  Widget build(BuildContext context) => ListenableBuilder(
+        listenable: ThemeController.instance,
+        builder: (context, _) {
+          final t = ThemeController.instance;
+          return _Section(
+            title: 'Appearance',
+            subtitle: 'Saved on this device',
+            child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+              SegmentedButton<ThemeMode>(
+                segments: const [
+                  ButtonSegment(value: ThemeMode.system, label: Text('System'), icon: Icon(Icons.brightness_auto_outlined)),
+                  ButtonSegment(value: ThemeMode.light, label: Text('Light'), icon: Icon(Icons.light_mode_outlined)),
+                  ButtonSegment(value: ThemeMode.dark, label: Text('Dark'), icon: Icon(Icons.dark_mode_outlined)),
+                ],
+                selected: {t.mode},
+                onSelectionChanged: (v) => t.setMode(v.first),
+              ),
+              const SizedBox(height: 16),
+              Text('Colour theme', style: Theme.of(context).textTheme.labelLarge),
+              const SizedBox(height: 8),
+              Wrap(spacing: 14, runSpacing: 12, children: [
+                for (final p in palettes) _Swatch(palette: p, selected: t.palette.id == p.id, onTap: () => t.setPalette(p)),
+              ]),
+            ]),
+          );
+        },
+      );
+}
+
+class _Swatch extends StatelessWidget {
+  const _Swatch({required this.palette, required this.selected, required this.onTap});
+  final Palette palette;
+  final bool selected;
+  final VoidCallback onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    final scheme = ColorScheme.fromSeed(
+        seedColor: palette.seed, brightness: Theme.of(context).brightness, dynamicSchemeVariant: DynamicSchemeVariant.fidelity);
+    return Semantics(
+      button: true,
+      selected: selected,
+      label: '${palette.name} theme',
+      child: InkWell(
+        onTap: onTap,
+        borderRadius: BorderRadius.circular(16),
+        child: Padding(
+          padding: const EdgeInsets.all(4),
+          child: Column(mainAxisSize: MainAxisSize.min, children: [
+            AnimatedContainer(
+              duration: const Duration(milliseconds: 200),
+              width: 46,
+              height: 46,
+              decoration: BoxDecoration(
+                shape: BoxShape.circle,
+                gradient: LinearGradient(
+                  colors: [scheme.primary, scheme.tertiary],
+                  begin: Alignment.topLeft,
+                  end: Alignment.bottomRight,
+                ),
+                border: Border.all(
+                    color: selected ? Theme.of(context).colorScheme.onSurface : Colors.transparent, width: 2.5),
+              ),
+              child: selected ? Icon(Icons.check, color: scheme.onPrimary) : null,
+            ),
+            const SizedBox(height: 4),
+            Text(palette.name, style: Theme.of(context).textTheme.labelSmall),
+          ]),
+        ),
+      ),
+    );
+  }
+}
+
+class _AccountSection extends StatelessWidget {
+  const _AccountSection();
+
+  Future<void> _delete(BuildContext context) async {
+    final typed = TextEditingController();
+    final ok = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => StatefulBuilder(
+        builder: (ctx, setState) => AlertDialog(
+          icon: Icon(Icons.delete_forever, color: Theme.of(ctx).colorScheme.error),
+          title: const Text('Delete your account?'),
+          content: SizedBox(
+            width: 440,
+            child: Column(mainAxisSize: MainAxisSize.min, crossAxisAlignment: CrossAxisAlignment.stretch, children: [
+              const Text('Your resume and cover letter, every job and its files, your CV drafts, settings and the '
+                  'account itself are deleted for good. This can\'t be undone.'),
+              const SizedBox(height: 14),
+              TextField(
+                controller: typed,
+                autofocus: true,
+                decoration: const InputDecoration(labelText: 'Type DELETE to confirm'),
+                onChanged: (_) => setState(() {}),
+              ),
+            ]),
+          ),
+          actions: [
+            TextButton(onPressed: () => Navigator.pop(ctx, false), child: const Text('Cancel')),
+            FilledButton(
+              style: FilledButton.styleFrom(backgroundColor: Theme.of(ctx).colorScheme.error),
+              onPressed: typed.text.trim() == 'DELETE' ? () => Navigator.pop(ctx, true) : null,
+              child: const Text('Delete everything'),
+            ),
+          ],
+        ),
+      ),
+    );
+    if (ok != true || !context.mounted) return;
+    showDialog<void>(
+      context: context,
+      barrierDismissible: false,
+      builder: (_) => const AlertDialog(content: Row(children: [
+        SizedBox(width: 20, height: 20, child: CircularProgressIndicator(strokeWidth: 2)),
+        SizedBox(width: 16),
+        Expanded(child: Text('Deleting your account…')),
+      ])),
+    );
+    try {
+      await Api.deleteAccount(); // signs out; the router then shows the sign-in screen
+    } catch (e) {
+      if (context.mounted) {
+        Navigator.of(context, rootNavigator: true).pop();
+        toast(context, '$e');
+      }
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    return _Section(
+      title: 'Account',
+      subtitle: Supabase.instance.client.auth.currentUser?.email,
+      child: Column(children: [
+        ListTile(
+          contentPadding: EdgeInsets.zero,
+          leading: const Icon(Icons.privacy_tip_outlined),
+          title: const Text('Privacy and AI'),
+          subtitle: const Text('What is stored and which AI providers see it'),
+          trailing: const Icon(Icons.chevron_right),
+          onTap: () => context.push('/privacy-info'),
+        ),
+        ListTile(
+          contentPadding: EdgeInsets.zero,
+          leading: const Icon(Icons.password),
+          title: const Text('Change password'),
+          trailing: const Icon(Icons.chevron_right),
+          onTap: () => context.push('/set-password'),
+        ),
+        ListTile(
+          contentPadding: EdgeInsets.zero,
+          leading: const Icon(Icons.logout),
+          title: const Text('Sign out'),
+          onTap: () => Supabase.instance.client.auth.signOut(),
+        ),
+        const Divider(),
+        ListTile(
+          contentPadding: EdgeInsets.zero,
+          leading: Icon(Icons.delete_forever_outlined, color: theme.colorScheme.error),
+          title: Text('Delete my account', style: TextStyle(color: theme.colorScheme.error)),
+          subtitle: const Text('Removes your files, jobs, drafts and settings for good'),
+          onTap: () => _delete(context),
+        ),
+      ]),
     );
   }
 }

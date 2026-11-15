@@ -1,7 +1,9 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:jobfinder/screens/help.dart';
-import 'package:jobfinder/widgets/onboarding.dart';
+import 'package:jobfinder/models.dart';
+import 'package:jobfinder/screens/guide.dart';
+import 'package:jobfinder/screens/privacy_info.dart';
 
 void main() {
   testWidgets('help page renders all sections', (tester) async {
@@ -16,17 +18,38 @@ void main() {
     expect(tester.takeException(), isNull);
   });
 
-  testWidgets('privacy notice returns true when acknowledged', (tester) async {
-    bool? result;
-    await tester.pumpWidget(MaterialApp(home: Builder(builder: (context) => TextButton(
-      onPressed: () async => result = await showDialog<bool>(context: context, builder: (_) => const PrivacyNoticeDialog()),
-      child: const Text('open'),
-    ))));
-    await tester.tap(find.text('open'));
+  testWidgets('consent needs the box ticked and lists the AI providers', (tester) async {
+    var accepted = 0;
+    await tester.binding.setSurfaceSize(const Size(420, 900));
+    addTearDown(() => tester.binding.setSurfaceSize(null));
+    await tester.pumpWidget(MaterialApp(
+        home: PrivacyConsentScreen(onAccept: () async => accepted++, onSignOut: () {})));
+    expect(find.text('Google Gemini'), findsOneWidget);
+    expect(find.text('Groq'), findsOneWidget);
+    final button = find.widgetWithText(FilledButton, 'Agree and continue');
+    await tester.ensureVisible(button);
+    expect(tester.widget<FilledButton>(button).onPressed, isNull);
+    await tester.ensureVisible(find.byKey(const Key('privacy_agree')));
     await tester.pumpAndSettle();
-    expect(find.textContaining('deleted automatically after 30 days'), findsOneWidget);
-    await tester.tap(find.text('I understand'));
+    await tester.tap(find.byKey(const Key('privacy_agree')));
     await tester.pumpAndSettle();
-    expect(result, isTrue);
+    await tester.ensureVisible(button);
+    await tester.pumpAndSettle();
+    await tester.tap(button);
+    await tester.pumpAndSettle();
+    expect(accepted, 1);
+    expect(tester.takeException(), isNull);
+  });
+
+  testWidgets('guide ticks off what is done', (tester) async {
+    await tester.binding.setSurfaceSize(const Size(400, 3000));
+    addTearDown(() => tester.binding.setSurfaceSize(null));
+    await tester.pumpWidget(const MaterialApp(
+        home: GuideScreen(status: SetupStatus(resumeDocx: true, locations: true, roles: false, jobBoards: false, hasRun: false))));
+    await tester.pumpAndSettle();
+    expect(find.text('Upload your resume'), findsOneWidget);
+    expect(find.text('2 of 4 set up'), findsOneWidget);
+    expect(find.textContaining('delete your account'), findsOneWidget);
+    expect(tester.takeException(), isNull);
   });
 }

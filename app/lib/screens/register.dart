@@ -20,7 +20,7 @@ class _RegisterScreenState extends State<RegisterScreen> {
   Future<String?> _submit(Registration r) async {
     try {
       final res = await Api.register(r);
-      // with email confirmation off we're signed in now and the router shows the waiting screen
+      // normally Supabase holds the session until the email is confirmed
       if (res.session == null && mounted) setState(() => _confirmEmail = r.email);
       return null;
     } on AuthException catch (e) {
@@ -50,8 +50,8 @@ class _RegisterScreenState extends State<RegisterScreen> {
                     const SizedBox(height: 12),
                     Text('Check your inbox', textAlign: TextAlign.center, style: theme.textTheme.headlineSmall),
                     const SizedBox(height: 8),
-                    Text('We sent a confirmation link to $_confirmEmail. Open it, then sign in. '
-                        'An admin approves new accounts, and you can use Pounce once you\'re approved.',
+                    Text('We sent a link to $_confirmEmail. Open it to verify your address, then sign in. '
+                        'Check your spam folder if it isn\'t there in a minute.',
                         textAlign: TextAlign.center),
                     const SizedBox(height: 24),
                     FilledButton(onPressed: () => context.go('/login'), child: const Text('Back to sign in')),
@@ -78,38 +78,24 @@ class _RegisterFormState extends State<RegisterForm> {
   final _first = TextEditingController();
   final _last = TextEditingController();
   final _email = TextEditingController();
-  final _phone = TextEditingController();
   final _password = TextEditingController();
   final _confirm = TextEditingController();
-  bool? _wantsApp;
-  String? _platform;
   bool _tried = false;
   bool _busy = false;
   String? _error;
-
-  String? get _appError {
-    if (!_tried) return null;
-    if (_wantsApp == null) return 'Choose yes or no';
-    if (_wantsApp! && _platform == null) return 'Choose iPhone or Android';
-    return null;
-  }
 
   Future<void> _submit() async {
     setState(() {
       _tried = true;
       _error = null;
     });
-    final fieldsOk = _form.currentState!.validate();
-    if (!fieldsOk || _appError != null) return;
+    if (!_form.currentState!.validate()) return;
     setState(() => _busy = true);
     final error = await widget.onSubmit(Registration(
       firstName: _first.text.trim(),
       lastName: _last.text.trim(),
       email: _email.text.trim(),
-      phone: normalizePhone(_phone.text)!,
       password: _password.text,
-      wantsMobileApp: _wantsApp!,
-      mobilePlatform: _wantsApp! ? _platform : null,
     ));
     if (mounted) {
       setState(() {
@@ -131,7 +117,7 @@ class _RegisterFormState extends State<RegisterForm> {
       autovalidateMode: _tried ? AutovalidateMode.onUserInteraction : AutovalidateMode.disabled,
       child: AutofillGroup(
         child: Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
-          Text('An admin approves every new account. You can sign in once you\'re approved.',
+          Text('We\'ll email you a link to verify your address. After that you can sign in.',
               style: theme.textTheme.bodyMedium),
           const SizedBox(height: 20),
           Row(crossAxisAlignment: CrossAxisAlignment.start, children: [
@@ -168,15 +154,6 @@ class _RegisterFormState extends State<RegisterForm> {
           ),
           const SizedBox(height: 12),
           TextFormField(
-            key: const Key('phone'),
-            controller: _phone,
-            keyboardType: TextInputType.phone,
-            autofillHints: const [AutofillHints.telephoneNumber],
-            decoration: _decoration('Phone number', hint: '+91 98765 43210'),
-            validator: validatePhone,
-          ),
-          const SizedBox(height: 12),
-          TextFormField(
             key: const Key('password'),
             controller: _password,
             obscureText: true,
@@ -193,31 +170,6 @@ class _RegisterFormState extends State<RegisterForm> {
             decoration: _decoration('Confirm password'),
             validator: (v) => v != _password.text ? 'The passwords don\'t match' : null,
           ),
-          const SizedBox(height: 20),
-          Text('Do you want the mobile app?', style: theme.textTheme.titleSmall),
-          RadioGroup<bool>(
-            groupValue: _wantsApp,
-            onChanged: (v) => setState(() {
-              _wantsApp = v;
-              if (v != true) _platform = null;
-            }),
-            child: const Row(children: [
-              Expanded(child: RadioListTile<bool>(key: Key('app_yes'), value: true, title: Text('Yes'), contentPadding: EdgeInsets.zero)),
-              Expanded(child: RadioListTile<bool>(key: Key('app_no'), value: false, title: Text('No'), contentPadding: EdgeInsets.zero)),
-            ]),
-          ),
-          if (_wantsApp == true) ...[
-            Text('Which phone?', style: theme.textTheme.titleSmall),
-            RadioGroup<String>(
-              groupValue: _platform,
-              onChanged: (v) => setState(() => _platform = v),
-              child: const Row(children: [
-                Expanded(child: RadioListTile<String>(key: Key('ios'), value: 'ios', title: Text('iPhone (iOS)'), contentPadding: EdgeInsets.zero)),
-                Expanded(child: RadioListTile<String>(key: Key('android'), value: 'android', title: Text('Android'), contentPadding: EdgeInsets.zero)),
-              ]),
-            ),
-          ],
-          if (_appError != null) Text(_appError!, style: TextStyle(color: theme.colorScheme.error, fontSize: 12)),
           if (_error != null) ...[
             const SizedBox(height: 12),
             Text(_error!, style: TextStyle(color: theme.colorScheme.error)),

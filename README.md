@@ -40,7 +40,7 @@ format and section order, and then either answer questions and let the AI write 
 start from your current resume. Every section can be regenerated, edited or switched back to your own words before
 you download Word or PDF, and you can make the result your master resume. It also writes UK-style cover letters
 from your resume ("Yours sincerely" to a named person, "Yours faithfully" otherwise). The AI part runs in a Supabase
-Edge Function (`supabase/functions/resume-ai`) with your own keys, 60 requests a day; the files are made in the app.
+Edge Function (`supabase/functions/resume-ai`) on the shared keys, 20 requests a day each; the files are made in the app.
 
 ## Job sources
 
@@ -62,10 +62,9 @@ It takes about half an hour the first time.
 1. Create a free project and run the files in `supabase/migrations/` in order (001 to 010) in the SQL editor.
    Create your own user first (Authentication > Users > Add user, tick Auto Confirm) because 002 makes the
    oldest user the owner.
-2. Turn on "Allow new users to sign up" under Authentication > Sign In / Providers. New accounts can't do
-   anything until an admin approves them in the app. Keep "Confirm email" on so people prove they own the
-   address, and set up custom SMTP (Resend or Brevo, both free) because the built-in one only sends a few
-   emails an hour.
+2. Turn on "Allow new users to sign up" and "Confirm email" under Authentication > Sign In / Providers. Accounts
+   can't do anything until the email is verified. Set up custom SMTP (Resend or Brevo, both free) because the
+   built-in one only sends a few emails an hour, and verification emails would stall.
 3. Authentication > URL Configuration: set the Site URL to the web app's address and add `https://<site>/**`
    under Redirect URLs. Without this, invite and reset emails open localhost:3000.
 4. Grab the project URL, the publishable key and the secret key from the API settings.
@@ -98,8 +97,9 @@ for this repo only, with Actions: Read and write.
 
 **In the app**
 
-Sign in, then go to Settings: upload the resume as .docx (plus the PDF and a master cover letter), add a
-Gemini key, and pick locations and roles. The Getting started card on Home lists whatever's still missing.
+Sign in, agree to the privacy notice, and follow the setup guide it opens: upload the resume as .docx (plus the
+PDF and a master cover letter) and pick locations and roles. Settings > Appearance has light and dark mode and six
+colour themes.
 
 **iPhone**
 ```bash
@@ -118,15 +118,17 @@ install the new APK over the old one. The build needs two secrets, `ANDROID_KEYS
 
 ## Other users
 
-Friends can use it too. They register from the sign-in page (name, email, phone and whether they want the
-mobile app) and wait until I approve them in Settings > Users, which I can do from my phone. Home shows how
-many people are waiting. Until then the database gives them nothing. They get their own settings and only
-ever see their own jobs, which row-level security enforces. They use their own API keys unless I switch on
-shared keys for them in Settings > Users. That screen also shows whether each person is set up, their last
-run and how much storage they use.
+Anyone can sign up from the sign-in page with their name, email and a password. They verify the email from the
+link they're sent, and the first time they sign in the app shows a privacy notice listing exactly which AI
+providers see their resume; nothing happens until they agree. Until the email is verified the database gives
+them nothing. Everyone gets their own settings and only ever sees their own jobs, which row-level security
+enforces. Nobody needs an API key: everyone runs on the shared keys (people who added keys before still have them
+tried first). Settings > Users lets me search accounts, see whether each person is set up, their last run and
+storage, and block an account if needed.
 
-As the project owner I can still see everything in the Supabase dashboard. The privacy notice in the app
-says so.
+People can delete their own account in Settings > Account, which removes their files and every row straight
+away (the `account` Edge Function). As the project owner I can still see everything in the Supabase dashboard,
+and the privacy notice says so.
 
 ## Admin bits
 
@@ -134,7 +136,7 @@ Accounts on @rajkumar.codes get the admin tools:
 
 - **Pause all** on Home is a kill switch for every agent.
 - **Run now** under Agents.
-- **Shared keys** in Settings, including which key is currently in use.
+- **Shared keys** in Settings, including which key is currently in use. Only admins can add keys.
 - **Users** panel.
 - **AI models**:
   - per-agent model order, e.g. Groq for the Scout and Gemini for tailoring

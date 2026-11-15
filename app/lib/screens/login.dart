@@ -3,6 +3,7 @@ import 'package:flutter/material.dart';
 import 'package:go_router/go_router.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 
+import '../api.dart';
 import '../auth_links.dart';
 import '../widgets/common.dart';
 
@@ -22,6 +23,7 @@ class _LoginScreenState extends State<LoginScreen> {
       : 'That email link didn\'t work (${AuthLinks.linkError}). Links can only be used once and expire after a day. '
           'Enter your email and tap "Forgot password?" to get a fresh one.';
   String? _info;
+  bool _unverified = false;
 
   void _show({String? error, String? info}) => setState(() {
         _error = error;
@@ -46,16 +48,34 @@ class _LoginScreenState extends State<LoginScreen> {
     }
   }
 
+  Future<void> _resend() async {
+    setState(() => _busy = true);
+    try {
+      await Api.resendVerification(_email.text.trim());
+      _show(info: 'A new verification link is on its way to ${_email.text.trim()}. Check spam too.');
+      setState(() => _unverified = false);
+    } on AuthException catch (e) {
+      _show(error: e.message);
+    } finally {
+      if (mounted) setState(() => _busy = false);
+    }
+  }
+
   Future<void> _signIn() async {
     setState(() {
       _busy = true;
       _error = null;
+      _unverified = false;
     });
     try {
       await Supabase.instance.client.auth
           .signInWithPassword(email: _email.text.trim(), password: _password.text);
     } on AuthException catch (e) {
-      setState(() => _error = e.message);
+      final unverified = e.code == 'email_not_confirmed' || e.message.toLowerCase().contains('not confirmed');
+      setState(() {
+        _unverified = unverified;
+        _error = unverified ? 'Verify your email first: open the link we sent when you signed up.' : e.message;
+      });
     } catch (e) {
       setState(() => _error = '$e');
     } finally {
@@ -97,6 +117,11 @@ class _LoginScreenState extends State<LoginScreen> {
                   const SizedBox(height: 12),
                   Text(_error!, style: TextStyle(color: theme.colorScheme.error)),
                 ],
+                if (_unverified)
+                  Align(
+                    alignment: Alignment.centerLeft,
+                    child: TextButton(onPressed: _busy ? null : _resend, child: const Text('Send the link again')),
+                  ),
                 if (_info != null) ...[
                   const SizedBox(height: 12),
                   Text(_info!, style: TextStyle(color: theme.colorScheme.primary)),

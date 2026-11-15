@@ -233,22 +233,30 @@ class Api {
 
   static Future<void> deleteDraft(String id) => supa.from('resume_drafts').delete().eq('id', id);
 
-  /// Calls the resume-ai Edge Function. Throws [BuilderException] with a message that can be shown as is.
-  static Future<Map<String, dynamic>> resumeAi(Map<String, dynamic> body) async {
+  /// Calls an Edge Function. Throws [BuilderException] with a message that can be shown as is.
+  static Future<Map<String, dynamic>> _invoke(String fn, Map<String, dynamic> body, String what) async {
     try {
-      final res = await supa.functions.invoke('resume-ai', body: body);
+      final res = await supa.functions.invoke(fn, body: body);
       return Map<String, dynamic>.from(res.data as Map);
     } on FunctionException catch (e) {
       final details = e.details;
       if (details is Map && details['error'] != null) {
         throw BuilderException('${details['error']}', details['code'] as String?);
       }
-      if (e.status == 404) {
-        throw const BuilderException('The resume builder isn\'t switched on yet (its server function is missing).', 'missing');
-      }
-      throw BuilderException('The AI request failed (${e.status}). Try again in a minute.', null);
+      if (e.status == 404) throw BuilderException('$what isn\'t switched on yet.', 'missing');
+      throw BuilderException('$what failed (${e.status}). Try again in a minute.', null);
     }
   }
+
+  static Future<Map<String, dynamic>> resumeAi(Map<String, dynamic> body) => _invoke('resume-ai', body, 'The resume builder');
+
+  /// A Stripe Checkout page for a credit pack (website and Android).
+  static Future<String> startCheckout(String pack) async =>
+      (await _invoke('payments', {'action': 'checkout', 'pack': pack}, 'Buying credits'))['url'] as String;
+
+  /// Has the server check an App Store purchase with Apple and add the credits.
+  static Future<Map<String, dynamic>> verifyApplePurchase(String transactionId, String productId) =>
+      _invoke('payments', {'action': 'apple', 'transaction_id': transactionId, 'product_id': productId}, 'App Store purchases');
 
   static Future<bool> hasMasterResume() async => (await parentFiles('resume')).isNotEmpty;
 

@@ -15,7 +15,8 @@ Gemini for the AI work, and Cloudflare for the website and the hourly trigger.
 Finding and scoring jobs is free for everyone. The paid part is per job and on request: a tailored resume and cover
 letter (1 credit) or interview prep (1 credit). Asking holds the credits; they're only taken when the work succeeds,
 so a failure costs nothing and shows an error code instead. Credits come from referrals: when someone signs up with
-a friend's code and verifies their email, both get 30 (admins can also add credits, and buying comes next). Each
+a friend's code and verifies their email, both get 30. People can also buy packs (20 for £5, 50 for £10, 200 for
+£20), and admins can add credits. Each
 email address can only earn sign-up credits once: a one-way hash of every address is kept even after an account is
 deleted, Gmail dots and `+tags` count as the same address, throwaway inbox domains get nothing, and a code earns at
 most 5 rewards a day and 20 in total. The admin panel lists every referral, including the declined ones and why.
@@ -70,7 +71,7 @@ Nothing gets scraped. For LinkedIn, Indeed and similar sites only the domain is 
 It takes about half an hour the first time.
 
 **Supabase**
-1. Create a free project and run the files in `supabase/migrations/` in order (001 to 012) in the SQL editor.
+1. Create a free project and run the files in `supabase/migrations/` in order (001 to 013) in the SQL editor.
    Create your own user first (Authentication > Users > Add user, tick Auto Confirm) because 002 makes the
    oldest user the owner.
 2. Turn on "Allow new users to sign up" and "Confirm email" under Authentication > Sign In / Providers. Accounts
@@ -99,6 +100,22 @@ Supabase functions" workflow, which needs `SUPABASE_ACCESS_TOKEN` (Supabase dash
 
 The Cloudflare token needs Pages: Edit and Workers Scripts: Edit. `GH_DISPATCH_TOKEN` is a fine-grained token
 for this repo only, with Actions: Read and write.
+
+**Payments** (optional, everything else works without them)
+
+Credits are sold through Stripe Checkout on the website and Android, and through Apple In-App Purchase in the iPhone
+app (Apple requires that for digital credits; the iPhone app never mentions Stripe or the website). The functions
+check every payment with Stripe or Apple before adding credits, add them once per payment, and take them back on a
+refund. Set these as Supabase Edge Function secrets (Edge Functions > Secrets):
+
+- Stripe: `STRIPE_SECRET_KEY`, and `STRIPE_WEBHOOK_SECRET` from a webhook endpoint pointing at
+  `https://<project>.supabase.co/functions/v1/stripe-webhook` with the events `checkout.session.completed`,
+  `checkout.session.async_payment_succeeded` and `charge.refunded`.
+- Apple: sign the Paid Apps agreement, create three consumable in-app purchases with the IDs
+  `com.rajkumargk.jobfinder.credits20`, `.credits50` and `.credits200` (price points closest to £5, £10, £20), and
+  an In-App Purchase key under Users and Access > Integrations. Then set `APPLE_IAP_ISSUER_ID`, `APPLE_IAP_KEY_ID`
+  and `APPLE_IAP_PRIVATE_KEY` (the .p8 contents). For refunds, set App Store Server Notifications (version 2) to
+  `https://<project>.supabase.co/functions/v1/apple-notifications`.
 
 **Cloudflare**
 1. Run the "Deploy web app" workflow. It creates the Pages project and deploys.

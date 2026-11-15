@@ -29,8 +29,8 @@ Open a match (or save a job from the board) and pick what you want:
 
 Credits are held while the work runs (usually 2 to 5 minutes) and only used if it works. If it fails you see an error
 code and keep your credits. You get credits by inviting friends: when someone signs up with your code and verifies
-their email, you both get **30 credits** (Settings > Account > Credits and invites). Each email address can only earn
-sign-up credits once.
+their email, you both get **30 credits**, or by buying a pack on the Credits page (Settings > Account > Credits and
+invites). Each email address can only earn sign-up credits once.
 
 ## The screens
 - **Home** - totals, your credits, what's running now, the current batch.

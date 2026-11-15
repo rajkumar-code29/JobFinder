@@ -47,6 +47,8 @@ dependencies:
   archive: ^4.7.1
   shared_preferences: ^2.5.6
   share_plus: ^13.3.1
+  in_app_purchase_storekit: ^0.4.17
+  in_app_purchase_platform_interface: ^1.4.1
 dev_dependencies:
   flutter_test:
     sdk: flutter

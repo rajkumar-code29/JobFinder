@@ -24,6 +24,8 @@ const otherServices = [
   ('Supabase', 'Database, file storage and sign-in. Your resume, settings, jobs and documents are stored here.'),
   ('GitHub Actions', 'Runs the agents that search, match and write.'),
   ('Cloudflare', 'Hosts the website.'),
+  ('Stripe (website and Android) and Apple (iPhone)', 'Take payments when you buy credits. Pounce never sees your card '
+      'details; it keeps what you bought, when and how much you paid.'),
   ('Job sites and company career pages', 'Searched with your target roles and locations only, never your resume.'),
 ];
 

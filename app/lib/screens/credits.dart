@@ -15,7 +15,10 @@ import 'buy_credits.dart';
 
 /// Credits: balance, inviting friends, entering a friend's code, buying, and the history.
 class CreditsScreen extends StatefulWidget {
-  const CreditsScreen({super.key});
+  const CreditsScreen({super.key, this.paid = false});
+
+  /// Back from Stripe Checkout.
+  final bool paid;
 
   @override
   State<CreditsScreen> createState() => _CreditsScreenState();
@@ -66,7 +69,7 @@ class _CreditsScreenState extends State<CreditsScreen> {
                 },
               ),
               const SizedBox(height: 16),
-              const BuyCreditsSection(),
+              BuyCreditsSection(paid: widget.paid),
               const SizedBox(height: 16),
               const _Prices(),
               const SizedBox(height: 16),

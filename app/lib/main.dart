@@ -10,6 +10,7 @@ import 'config.dart';
 import 'screens/admin.dart';
 import 'screens/agents.dart';
 import 'screens/board.dart';
+import 'screens/buy_credits.dart';
 import 'screens/credits.dart';
 import 'screens/create.dart';
 import 'screens/custom.dart';
@@ -48,6 +49,7 @@ Future<void> main() async {
     // implicit flow so reset/invite links work on a different device than the one that asked
     authOptions: const FlutterAuthClientOptions(authFlowType: AuthFlowType.implicit),
   );
+  ApplePurchases.instance.start(); // iPhone only: picks up any unfinished App Store purchases
   runApp(JobFinderApp());
 }
 
@@ -161,7 +163,7 @@ class JobFinderApp extends StatelessWidget {
           GoRoute(path: '/admin', builder: (_, _) => const AdminScreen()),
           GoRoute(path: '/admin/users', builder: (_, _) => const UsersScreen()),
           GoRoute(path: '/admin/add-job', builder: (_, _) => const AdminAddJobScreen()),
-          GoRoute(path: '/credits', builder: (_, _) => const CreditsScreen()),
+          GoRoute(path: '/credits', builder: (_, state) => CreditsScreen(paid: state.uri.queryParameters['paid'] == '1')),
         ],
       ),
     ],

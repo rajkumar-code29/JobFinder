@@ -3,6 +3,8 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:jobfinder/models.dart';
 import 'package:jobfinder/registration.dart';
 import 'package:jobfinder/screens/board.dart';
+import 'package:jobfinder/screens/buy_credits.dart';
+import 'package:flutter/foundation.dart';
 import 'package:jobfinder/screens/credits.dart';
 import 'package:jobfinder/screens/register.dart';
 import 'package:jobfinder/widgets/credits.dart';
@@ -104,6 +106,33 @@ void main() {
     }
     expect(find.textContaining('2 friends have joined'), findsOneWidget);
     expect(tester.takeException(), isNull);
+  });
+
+  testWidgets('website and Android sell the packs through Stripe', (tester) async {
+    phone(tester);
+    await tester.pumpWidget(const MaterialApp(home: Scaffold(body: SingleChildScrollView(child: BuyCreditsSection(paid: true)))));
+    for (final price in ['£5', '£10', '£20']) {
+      expect(find.text(price), findsOneWidget);
+    }
+    expect(find.text('25p each'), findsOneWidget);
+    expect(find.text('10p each'), findsOneWidget);
+    expect(find.textContaining('Stripe'), findsOneWidget);
+    expect(find.textContaining('Thanks for your payment'), findsOneWidget);
+    expect(tester.takeException(), isNull);
+  });
+
+  testWidgets('the iPhone app never mentions Stripe or the website', (tester) async {
+    phone(tester);
+    debugDefaultTargetPlatformOverride = TargetPlatform.iOS;
+    addTearDown(() => debugDefaultTargetPlatformOverride = null);
+    expect(usesAppStore, isTrue);
+    await tester.pumpWidget(const MaterialApp(home: Scaffold(body: SingleChildScrollView(child: BuyCreditsSection(paid: true)))));
+    await tester.pump(const Duration(milliseconds: 500));
+    expect(find.text('Buy credits'), findsOneWidget);
+    expect(find.textContaining('Stripe'), findsNothing);
+    expect(find.text('£5'), findsNothing);
+    expect(find.textContaining('Thanks for your payment'), findsNothing);
+    debugDefaultTargetPlatformOverride = null;
   });
 
   test('referral codes are tidied and checked', () {
